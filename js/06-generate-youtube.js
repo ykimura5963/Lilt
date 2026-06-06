@@ -24,9 +24,19 @@ let currentBase   = '';    /* 動画ファイルのベース名 */
 let ytAutoUrl     = '';
 let ytBackendUrl  = 'http://localhost:8000';
 let ytOllamaModel = 'qwen3.5:4b';
-let ytLlmBackend  = 'ollama';   /* 'ollama' | 'runpod' */
-let runpodUrl     = '';
+/* 翻訳LLMプロバイダ: 'ollama' | 'runpod' | 'openrouter' | 'openai' */
+let ytLlmBackend  = 'ollama';
+/* RunPod */
+let runpodUrl     = 'https://api.runpod.ai/v2/<endpoint_id>/runsync';
 let runpodApiKey  = '';
+let runpodModel   = 'qwen/qwen3.5-9b';
+/* OpenRouter */
+let orApiKey      = '';
+let orModel       = 'qwen/qwen-2.5-72b-instruct';
+/* OpenAI（翻訳用・汎用OpenAI互換。endpoint空=公式） */
+let oaiTransKey   = '';
+let oaiTransModel = 'gpt-4o-mini';
+let oaiTransUrl   = '';   /* 空=https://api.openai.com/v1/chat/completions */
 
 /* ── プロジェクト一覧を取得してDOMに表示 ── */
 async function loadYouTubeProjects(){
@@ -107,24 +117,44 @@ async function loadYouTubeProject(videoId){
   }
 }
 
+/* ── 翻訳プロバイダ設定を解決（provider/endpoint/api_key/model） ── */
+function resolveTranslateProvider(){
+  const p = ytLlmBackend || 'ollama';
+  if(p === 'runpod'){
+    return { provider:'runpod',
+      endpoint: (document.getElementById('yt-runpod-url')?.value?.trim()   || runpodUrl),
+      apiKey:   (document.getElementById('yt-runpod-key')?.value?.trim()   || runpodApiKey),
+      model:    (document.getElementById('yt-runpod-model')?.value?.trim() || runpodModel) };
+  }
+  if(p === 'openrouter'){
+    return { provider:'openrouter', endpoint:'',
+      apiKey: (document.getElementById('yt-or-key')?.value?.trim()   || orApiKey),
+      model:  (document.getElementById('yt-or-model')?.value?.trim() || orModel) };
+  }
+  if(p === 'openai'){
+    return { provider:'openai',
+      endpoint:(document.getElementById('yt-oai-url')?.value?.trim()   || oaiTransUrl),
+      apiKey:  (document.getElementById('yt-oai-key')?.value?.trim()   || oaiTransKey),
+      model:   (document.getElementById('yt-oai-model')?.value?.trim() || oaiTransModel) };
+  }
+  /* ollama */
+  return { provider:'ollama', endpoint:'', apiKey:'',
+    model: (document.getElementById('yt-ollama-model')?.value?.trim() || ytOllamaModel) };
+}
+
 /* ── YouTube全自動処理をSSEで実行 ── */
 async function runYouTubeAutoProcess(){
-  const url       = document.getElementById('yt-auto-url')?.value?.trim()     || ytAutoUrl;
-  const model     = document.getElementById('yt-ollama-model')?.value?.trim() || ytOllamaModel;
-  const bkUrl     = document.getElementById('yt-backend-url')?.value?.trim()  || ytBackendUrl;
-  const annModel  = genModel || 'qwen3.5:2b';
+  const url       = document.getElementById('yt-auto-url')?.value?.trim() || ytAutoUrl;
+  const bkUrl     = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
   const ollamaUrl = genOllamaUrl || 'http://localhost:11434';
-  /* RunPod: 設定タブの入力欄 or 状態変数 */
-  const rpUrl     = document.getElementById('yt-runpod-url')?.value?.trim()  || runpodUrl;
-  const rpKey     = document.getElementById('yt-runpod-key')?.value?.trim()  || runpodApiKey;
-  const useRunpod = ytLlmBackend === 'runpod';
+  const prov      = resolveTranslateProvider();
 
   if(!url){ showToast('YouTube URLを入力してください', true); return; }
-  if(useRunpod && !rpKey){ showToast('RunPod API Keyを設定タブで入力してください', true); return; }
+  if(prov.provider !== 'ollama' && !prov.apiKey){
+    showToast(`${prov.provider} のAPIキーを「設定」タブで入力してください`, true); return;
+  }
 
   ytBackendUrl = bkUrl;
-  ytOllamaModel = model;
-  if(useRunpod){ runpodUrl = rpUrl; runpodApiKey = rpKey; }
   persistGenSettings();
 
   const btn     = document.getElementById('yt-auto-btn');
@@ -144,12 +174,11 @@ async function runYouTubeAutoProcess(){
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         url,
-        model,                         /* 後方互換 */
-        translate_model: model,        /* 翻訳モデル */
-        annotate_model:  annModel,     /* 注釈モデル（現在未使用・後方互換） */
-        ollama_url: ollamaUrl,
-        runpod_url:     useRunpod ? rpUrl : '',
-        runpod_api_key: useRunpod ? rpKey : '',
+        translate_model:    prov.model,        /* プロバイダのモデルID/タグ */
+        ollama_url:         ollamaUrl,
+        translate_provider: prov.provider,     /* ollama|runpod|openrouter|openai */
+        translate_endpoint: prov.endpoint,     /* OpenAI互換URL（RunPod runsync可） */
+        translate_api_key:  prov.apiKey,
       })
     });
     if(!response.ok){
@@ -353,23 +382,54 @@ function settingsHTML(){
     <div class="gen-status" id="backend-health" style="margin-top:6px">接続確認中...</div>
     <div class="gen-label" style="margin-top:10px">翻訳 LLM の接続先</div>
     <select class="gen-input" id="yt-llm-backend" onchange="onYtLlmBackendChange(this.value)">
-      <option value="ollama" ${ytLlmBackend==='ollama'?'selected':''}>Ollama（ローカル）</option>
-      <option value="runpod" ${ytLlmBackend==='runpod'?'selected':''}>RunPod Serverless</option>
+      <option value="ollama"     ${ytLlmBackend==='ollama'?'selected':''}>Ollama（ローカル）</option>
+      <option value="runpod"     ${ytLlmBackend==='runpod'?'selected':''}>RunPod Serverless（vLLM）</option>
+      <option value="openrouter" ${ytLlmBackend==='openrouter'?'selected':''}>OpenRouter</option>
+      <option value="openai"     ${ytLlmBackend==='openai'?'selected':''}>OpenAI API（汎用OpenAI互換）</option>
     </select>
-    <div id="yt-ollama-section" style="${ytLlmBackend==='runpod'?'display:none':''}">
-      <div class="gen-label" style="margin-top:6px">翻訳モデル（日本語訳・全自動）</div>
+
+    <div id="yt-prov-ollama" style="${ytLlmBackend==='ollama'?'':'display:none'}">
+      <div class="gen-label" style="margin-top:6px">翻訳モデル（Ollamaタグ）</div>
       <input class="gen-input" id="yt-ollama-model" value="${ytOllamaModel}"
         oninput="ytOllamaModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:4b">
     </div>
-    <div id="yt-runpod-section" style="${ytLlmBackend==='runpod'?'':'display:none'}">
-      <div class="gen-label" style="margin-top:6px">RunPod Endpoint URL</div>
+
+    <div id="yt-prov-runpod" style="${ytLlmBackend==='runpod'?'':'display:none'}">
+      <div class="gen-label" style="margin-top:6px">RunPod Endpoint URL（runsync可）</div>
       <input class="gen-input" id="yt-runpod-url" value="${runpodUrl}"
         oninput="runpodUrl=this.value" onchange="persistGenSettings()"
-        placeholder="https://api.runpod.ai/v2/.../runsync">
+        placeholder="https://api.runpod.ai/v2/&lt;id&gt;/runsync">
       <div class="gen-label" style="margin-top:6px">RunPod API Key</div>
       <input class="gen-input" type="password" id="yt-runpod-key" value="${runpodApiKey}"
         oninput="runpodApiKey=this.value" onchange="persistGenSettings()"
         placeholder="rpa_..." autocomplete="off">
+      <div class="gen-label" style="margin-top:6px">モデルID（vLLMにデプロイ済み）</div>
+      <input class="gen-input" id="yt-runpod-model" value="${runpodModel}"
+        oninput="runpodModel=this.value" onchange="persistGenSettings()" placeholder="qwen/qwen3.5-9b">
+    </div>
+
+    <div id="yt-prov-openrouter" style="${ytLlmBackend==='openrouter'?'':'display:none'}">
+      <div class="gen-label" style="margin-top:6px">OpenRouter API Key</div>
+      <input class="gen-input" type="password" id="yt-or-key" value="${orApiKey}"
+        oninput="orApiKey=this.value" onchange="persistGenSettings()"
+        placeholder="sk-or-..." autocomplete="off">
+      <div class="gen-label" style="margin-top:6px">モデルID</div>
+      <input class="gen-input" id="yt-or-model" value="${orModel}"
+        oninput="orModel=this.value" onchange="persistGenSettings()" placeholder="qwen/qwen-2.5-72b-instruct">
+    </div>
+
+    <div id="yt-prov-openai" style="${ytLlmBackend==='openai'?'':'display:none'}">
+      <div class="gen-label" style="margin-top:6px">OpenAI APIキー</div>
+      <input class="gen-input" type="password" id="yt-oai-key" value="${oaiTransKey}"
+        oninput="oaiTransKey=this.value" onchange="persistGenSettings()"
+        placeholder="sk-..." autocomplete="off">
+      <div class="gen-label" style="margin-top:6px">モデルID</div>
+      <input class="gen-input" id="yt-oai-model" value="${oaiTransModel}"
+        oninput="oaiTransModel=this.value" onchange="persistGenSettings()" placeholder="gpt-4o-mini">
+      <div class="gen-label" style="margin-top:6px">エンドポイント（任意・空=公式）</div>
+      <input class="gen-input" id="yt-oai-url" value="${oaiTransUrl}"
+        oninput="oaiTransUrl=this.value" onchange="persistGenSettings()"
+        placeholder="https://api.openai.com/v1/chat/completions">
     </div>
   </div>
 </div>
@@ -390,14 +450,14 @@ function settingsHTML(){
 </div>`;
 }
 
-/* ── YouTube全自動の翻訳LLM切替（Ollama ↔ RunPod） ── */
+/* ── YouTube全自動の翻訳LLM切替（Ollama / RunPod / OpenRouter / OpenAI） ── */
 function onYtLlmBackendChange(val){
   ytLlmBackend = val;
-  const olSec = document.getElementById('yt-ollama-section');
-  const rpSec = document.getElementById('yt-runpod-section');
-  if(olSec) olSec.style.display = val === 'runpod' ? 'none' : '';
-  if(rpSec) rpSec.style.display = val === 'runpod' ? ''     : 'none';
-  saveSettings({ytLlmBackend});
+  ['ollama','runpod','openrouter','openai'].forEach(p=>{
+    const sec = document.getElementById('yt-prov-'+p);
+    if(sec) sec.style.display = (p === val) ? '' : 'none';
+  });
+  persistGenSettings();
 }
 
 /* ── ブラウザ内生成のバックエンド切替 ── */
