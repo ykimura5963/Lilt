@@ -3,7 +3,7 @@ setlocal enableextensions
 cd /d "%~dp0"
 
 echo ============================================
-echo    PRONUNCIATION LAB - launcher
+echo    Lilt - launcher
 echo ============================================
 echo.
 
@@ -66,15 +66,15 @@ goto :launch
 :launch
 echo.
 echo Starting backend (port 8000) and frontend (port 8080)...
-start "PronLab Backend"  cmd /k "python -m uvicorn main:app --port 8000"
+start "Lilt Backend"  cmd /k "python -m uvicorn main:app --port 8000"
 timeout /t 2 >nul
-start "PronLab Frontend" cmd /k "python -m http.server 8080"
+start "Lilt Frontend" cmd /k "python -m http.server 8080"
 timeout /t 2 >nul
-start "" http://localhost:8080/pronunciation_learner.html
+start "" http://localhost:8080/index.html
 
 echo.
 echo   Backend : http://localhost:8000   (health check: /health)
-echo   App     : http://localhost:8080/pronunciation_learner.html
+echo   App     : http://localhost:8080/index.html
 echo.
 echo This window can be closed. The two opened windows keep the servers running.
 echo.

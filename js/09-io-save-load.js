@@ -149,7 +149,7 @@ async function tryAutoLoadAnnotation(base){
 /* switchTab は上で直接拡張済み */
 
 /* ══ 親フォルダハンドルの永続化（IndexedDB） ══ */
-const _IDB_DB='pronlab', _IDB_STORE='handles', _IDB_KEY='parentDir';
+const _IDB_DB='lilt', _IDB_STORE='handles', _IDB_KEY='parentDir';
 function _idb(){
   return new Promise((res,rej)=>{
     const r=indexedDB.open(_IDB_DB,1);
@@ -240,7 +240,9 @@ function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function persistGenSettings(){
   saveSettings({
     ytBackendUrl, ytOllamaModel, ytLlmBackend,
-    runpodUrl, runpodApiKey,
+    runpodUrl, runpodApiKey, runpodModel,
+    orApiKey, orModel,
+    oaiTransKey, oaiTransModel, oaiTransUrl,
     genOllamaUrl, genModel, genBackend
   });
 }
@@ -261,6 +263,12 @@ function applySavedSettings(){
   if(typeof s.ytLlmBackend  === 'string') ytLlmBackend  = s.ytLlmBackend;
   if(typeof s.runpodUrl     === 'string') runpodUrl     = s.runpodUrl;
   if(typeof s.runpodApiKey  === 'string') runpodApiKey  = s.runpodApiKey;
+  if(typeof s.runpodModel   === 'string') runpodModel   = s.runpodModel;
+  if(typeof s.orApiKey      === 'string') orApiKey      = s.orApiKey;
+  if(typeof s.orModel       === 'string') orModel       = s.orModel;
+  if(typeof s.oaiTransKey   === 'string') oaiTransKey   = s.oaiTransKey;
+  if(typeof s.oaiTransModel === 'string') oaiTransModel = s.oaiTransModel;
+  if(typeof s.oaiTransUrl   === 'string') oaiTransUrl   = s.oaiTransUrl;
   if(typeof s.genOllamaUrl  === 'string') genOllamaUrl  = s.genOllamaUrl;
   if(typeof s.genModel      === 'string') genModel      = s.genModel;
   if(typeof s.genBackend    === 'string') genBackend    = s.genBackend;

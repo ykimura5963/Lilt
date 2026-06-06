@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 環境・秘密情報
+.env
+*.local
+
+# 生成物（処理済みプロジェクト: 動画・data.json・data.md）
+projects/
+
+# ffmpeg 同梱バイナリ
+ffmpeg/
+
+# OS
+.DS_Store
+Thumbs.db

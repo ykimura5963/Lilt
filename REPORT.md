@@ -1,10 +1,10 @@
-# PRONUNCIATION LAB — プロジェクト分析レポート
+# Lilt — プロジェクト分析レポート
 *2026-06-06 時点*
 
 ## 全体構成
 - **バックエンド**（`main.py` / FastAPI）：YouTube URL → `yt-dlp`（480p）+ `youtube-transcript-api`（字幕）→ ローカルLLM（Ollama/Qwen）2段階処理（翻訳＝4b／注釈＝2bにモデル分離可）→ `projects/{video_id}/{video.mp4, data.json, data.md}` に保存（保存時にテンポ時刻を焼き込み）。SSEで進捗配信。エンドポイント：`POST /process`、`GET /projects`、`DELETE /projects/{id}`、`GET /health`（ffmpeg/Ollama/モデル診断）、`/files/*`（動画シーク用Range対応）。CORSは `ALLOWED_ORIGINS` で制限可、起動時に ffmpeg をプリフライトチェック。
 - **起動**：`start.bat` がワンクリックで ffmpeg 自動導入 → Ollama 起動（`KEEP_ALIVE`/`NUM_PARALLEL` 調整）→ バックエンド/フロント/ブラウザを自動起動。
-- **フロントエンド**：`pronunciation_learner.html`（マークアップ）＋ `styles.css` ＋ `js/01-data.js`〜`10-init.js`（関心ごとに分割した順序付きクラシックスクリプト）。プレイヤー＋アノテーション表示＋生成UI。バックエンドおよび Ollama/OpenAI と直接通信。
+- **フロントエンド**：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01-data.js`〜`10-init.js`（関心ごとに分割した順序付きクラシックスクリプト）。プレイヤー＋アノテーション表示＋生成UI。バックエンドおよび Ollama/OpenAI と直接通信。
 - **データ構造**：`paras[{ id, start, end, en, ja, words[{ t, ws, stress, inton, elision, note, syl }] }]`
 
 ---
@@ -46,7 +46,7 @@
 
 **インフラ・保守性（★今セッション）**
 - ★`start.bat` ワンクリック起動（ffmpeg自動導入 → Ollama起動＋CPU推論チューニング `KEEP_ALIVE=30m`/`NUM_PARALLEL=1` → サーバー2種＋ブラウザ）
-- ★コード分割：`pronunciation_learner.html`（マークアップ）＋ `styles.css` ＋ `js/01〜10`（順序付きクラシックスクリプト）
+- ★コード分割：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01〜10`（順序付きクラシックスクリプト）
 - ★`syncHighlight` の DOM 要素キャッシュ化（再生ホットパス最適化）
 - ★バックエンド：`/health`、`ALLOWED_ORIGINS`、ffmpegプリフライト、空字幕ガード
 
@@ -79,7 +79,7 @@
 
 **エンジニアリング**
 - ✅ **完了** 2,200行の単一HTML → モジュール化で保守性向上。
-  - `pronunciation_learner.html`（116行のマークアップのみ）＋ `styles.css` ＋ `js/01-data.js`〜`js/10-init.js`（関心ごとに10分割）に分離。
+  - `index.html`（116行のマークアップのみ）＋ `styles.css` ＋ `js/01-data.js`〜`js/10-init.js`（関心ごとに10分割）に分離。
   - **ESモジュール（`type="module"`）は不採用**：本アプリは大量のインラインハンドラ（`onclick`/`oninput`）と、それらが直接書き換えるトップレベル `let` に依存しており、ESモジュール化すると全て破綻する。代わりに**順序付きクラシックスクリプト**へ分割（複数スクリプトは単一のグローバル字句環境を共有するため挙動は完全等価）。ビルド手順も不要で「`python -m http.server` で開くだけ」の運用を維持。
   - 検証：分割後JSの連結が元と**バイト等価**であることを確認＋各ファイル `node --check` 合格＋実ブラウザで「コンソールエラーなし／トランスクリプト描画／関数到達性／インラインハンドラ↔`let`連動／タブ・トグル動作」を確認済み。
 - ✅ **完了** `CORS allow_origins=["*"]` と広範なファイル配信は localhost なら問題ないが、外部公開する場合は要制限。
@@ -171,7 +171,7 @@
 | `js/10-shadowing.js`（新規）| 録音・A/B・練習ループ・波形・メトロノームのロジック |
 | `js/03-render-sync.js` | `para-head` に 🎤/▶/AB ボタン、段落に `<canvas class="wave">` を追加 |
 | `js/02-state.js` | `SETTINGS` に `practiceLoops`/`gapMs`/`metronome`/`recSpeed` を追加 |
-| `pronunciation_learner.html` | `<script src="js/10-shadowing.js">` を init 直前に挿入、コントロールバーに 🎧/ループ/ポーズ/♩ を追加 |
+| `index.html` | `<script src="js/10-shadowing.js">` を init 直前に挿入、コントロールバーに 🎧/ループ/ポーズ/♩ を追加 |
 | `styles.css` | 録音ボタン・波形キャンバス・練習パネルのスタイル |
 | 再利用 | `chunkRepeat`（区間）、`tempoWordStarts`/`wordWeight`（オンセット）、`applyPlaybackSpeed`（ピッチ保持）、`saveSettings`、FSA保存 |
 

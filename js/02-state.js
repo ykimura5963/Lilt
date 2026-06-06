@@ -15,7 +15,7 @@ let playSpeed=1;
    一元管理: 表示レイヤー・リズム同期・追従・文字サイズ・速度・オフセット・
    バックエンド/モデル設定を1つのキーに保存し、起動時に復元する。
 ══════════════════════════════════════════════════════════ */
-const SETTINGS_KEY = 'pronlab.settings.v1';
+const SETTINGS_KEY = 'lilt.settings.v1';
 function loadSettings(){
   try{ return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }
   catch(e){ return {}; }

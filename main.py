@@ -5,7 +5,7 @@ import shutil
 import asyncio
 import logging
 import datetime
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +19,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Pronunciation Lab API")
+app = FastAPI(title="Lilt API")
 
 # CORS: 既定は全許可（localhost開発用）。本番では ALLOWED_ORIGINS="http://a,http://b" で制限可能
 _origins_env = os.environ.get("ALLOWED_ORIGINS", "*").strip()
@@ -55,12 +55,13 @@ else:
 class ProcessRequest(BaseModel):
     url: str
     model: str = OLLAMA_MODEL            # 後方互換（translate/annotate 未指定時の既定）
-    translate_model: str = ""            # 日本語訳・チャンク分割用（推奨: 4b）
-    annotate_model: str = ""             # 発音アノテーション用（推奨: 2b・高速）
+    translate_model: str = ""            # 翻訳モデル名（ollama: タグ / 他: モデルID）
+    annotate_model: str = ""             # 後方互換（注釈はルールベース化済み・未使用）
     ollama_url: str = OLLAMA_URL
-    runpod_url: str = ""                 # RunPod Serverless エンドポイント（空=Ollama使用）
-    runpod_api_key: str = ""             # RunPod API キー
-    runpod_model: str = "Qwen/Qwen3.5-9B"  # vLLM にデプロイされたモデル名（HuggingFace ID）
+    # ── 翻訳LLMプロバイダ（RunPod/OpenRouter/OpenAI は OpenAI互換で統一）──
+    translate_provider: str = "ollama"   # ollama | runpod | openrouter | openai
+    translate_endpoint: str = ""         # OpenAI互換URL（RunPodのrunsync URLも受理／空=既定）
+    translate_api_key: str = ""          # RunPod/OpenRouter/OpenAI のAPIキー
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -80,7 +81,7 @@ def extract_video_id(url: str) -> str:
 
 
 def assign_word_timings(words: list, start: float, end: float) -> list:
-    """Mirrors assignWordTimings() in pronunciation_learner.html."""
+    """Mirrors assignWordTimings() in index.html."""
     n = len(words)
     if not n:
         return words
@@ -95,7 +96,7 @@ def assign_word_timings(words: list, start: float, end: float) -> list:
     return result
 
 
-# ── テンポ（リズム）モデル: pronunciation_learner.html と同一ロジック ──────────
+# ── テンポ（リズム）モデル: index.html と同一ロジック ──────────
 SPEECH_TEMPO = {
     "base_per_word": 0.08,
     "per_syllable":  0.17,
@@ -322,14 +323,13 @@ def _simple_chunk_transcript(transcript: list) -> list:
 
 def _llm_chunk_and_translate(
     transcript: list, ollama_url: str, model: str,
-    runpod_url: str = "", runpod_api_key: str = "",
+    provider: str = "ollama", endpoint: str = "", api_key: str = "",
 ) -> list:
     # 10 entries per window: smaller windows → fewer output paragraphs → less truncation risk
     WINDOW = 10
     windows = [transcript[i:i+WINDOW] for i in range(0, len(transcript), WINDOW)]
     all_paras: list = []
     failed_windows: list = []
-    use_runpod = bool(runpod_url and runpod_api_key)
 
     for wi, window in enumerate(windows):
         # Worst case: 1 paragraph per entry → window × ~120 tokens/para + 512 overhead
@@ -341,10 +341,11 @@ def _llm_chunk_and_translate(
             {"role": "user",   "content": f"Segment and translate these {len(window)} entries:\n{user_content}"},
         ]
         try:
-            if use_runpod:
-                raw = _runpod_chat(messages, runpod_url, runpod_api_key, num_predict)
-            else:
-                raw = _ollama_chat(messages, ollama_url, model, num_predict)
+            raw = _translate_chat(
+                messages, num_predict,
+                provider=provider, ollama_url=ollama_url, model=model,
+                endpoint=endpoint, api_key=api_key,
+            )
             repaired = _repair_json(raw)
             parsed = json.loads(repaired)
             paras = parsed.get("paragraphs", [])
@@ -483,36 +484,72 @@ def _ollama_chat(messages: list, base_url: str, model: str, num_predict: int) ->
     return resp.json()["message"]["content"]
 
 
-def _runpod_chat(messages: list, endpoint_url: str, api_key: str, max_tokens: int) -> str:
-    """RunPod Serverless /runsync を呼び出す（vLLM ハンドラ想定）。
-    レスポンスは OpenAI 互換 choices フォーマットを期待。"""
-    resp = http_requests.post(
-        endpoint_url,
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "input": {
-                "messages":   messages,
-                "max_tokens": max_tokens,
-                "temperature": 0,
-            }
-        },
-        timeout=300,
-    )
-    resp.raise_for_status()
+OPENROUTER_DEFAULT_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENAI_DEFAULT_URL     = "https://api.openai.com/v1/chat/completions"
+
+
+def _normalize_runpod_url(url: str) -> str:
+    """RunPodエンドポイントURLを OpenAI互換の chat/completions URL に正規化。
+    例: https://api.runpod.ai/v2/{id}/runsync
+        → https://api.runpod.ai/v2/{id}/openai/v1/chat/completions"""
+    u = (url or "").strip().rstrip("/")
+    u = re.sub(r"/(runsync|run)$", "", u)          # 末尾の /runsync・/run を除去
+    if u.endswith("/chat/completions"):
+        return u
+    if u.endswith("/openai/v1"):
+        return u + "/chat/completions"
+    return u + "/openai/v1/chat/completions"        # base のみ → 補完
+
+
+def _openai_compatible_chat(
+    messages: list, url: str, api_key: str, model: str,
+    max_tokens: int, extra_body: Optional[dict] = None,
+) -> str:
+    """OpenAI互換 /chat/completions を呼ぶ（RunPod vLLM / OpenRouter / OpenAI 共通）。"""
+    payload = {
+        "model":       model,
+        "messages":    messages,
+        "temperature": 0,
+        "max_tokens":  max_tokens,
+    }
+    if extra_body:
+        payload.update(extra_body)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # OpenRouter 推奨ヘッダ（任意・ランキング用）
+    if "openrouter.ai" in url:
+        headers["HTTP-Referer"] = "http://localhost:8080"
+        headers["X-Title"]      = "Lilt"
+    resp = http_requests.post(url, headers=headers, json=payload, timeout=300)
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
-    # RunPod runsync: {"status":"COMPLETED","output":{...openai-like...}}
-    if data.get("status") not in ("COMPLETED", None):
-        raise RuntimeError(f"RunPod status={data.get('status')}: {data.get('error','')}")
-    output = data.get("output", data)
-    if isinstance(output, dict):
-        choices = output.get("choices", [])
-        if choices:
-            return choices[0]["message"]["content"]
-        if isinstance(output.get("text"), str):
-            return output["text"]
-    if isinstance(output, str):
-        return output
-    raise RuntimeError(f"RunPod: unexpected output format: {str(output)[:300]}")
+    choices = data.get("choices", [])
+    if not choices:
+        raise RuntimeError(f"レスポンスに choices がありません: {str(data)[:300]}")
+    return choices[0]["message"]["content"]
+
+
+def _translate_chat(
+    messages: list, num_predict: int, *,
+    provider: str, ollama_url: str, model: str,
+    endpoint: str, api_key: str,
+) -> str:
+    """翻訳ステージのプロバイダ振り分け。"""
+    provider = (provider or "ollama").lower()
+    if provider == "ollama":
+        return _ollama_chat(messages, ollama_url, model, num_predict)
+
+    if provider == "runpod":
+        url   = _normalize_runpod_url(endpoint)
+        # Qwen3系の thinking を無効化（vLLM拡張）— 速度・トークン節約
+        extra = {"chat_template_kwargs": {"enable_thinking": False}}
+    elif provider == "openrouter":
+        url   = endpoint.strip() if endpoint.strip() else OPENROUTER_DEFAULT_URL
+        extra = {"reasoning": {"enabled": False}}   # OpenRouter統一パラメータ（非対応モデルは無視）
+    else:  # openai（汎用OpenAI互換）
+        url   = endpoint.strip() if endpoint.strip() else OPENAI_DEFAULT_URL
+        extra = None
+    return _openai_compatible_chat(messages, url, api_key, model, num_predict, extra)
 
 
 def _make_fallback_para(para: dict, idx: int) -> dict:
@@ -783,16 +820,16 @@ async def process_youtube(request: ProcessRequest):
         # アノテーションはルールベースに置き換え済みのため翻訳モデルのみ使用
         translate_model = request.translate_model or request.model
 
-        # ── Stage 3a: Chunk & translate（翻訳モデル） ──────────────────────
-        _use_runpod = bool(request.runpod_url and request.runpod_api_key)
-        _llm_label  = "RunPod" if _use_runpod else translate_model
+        # ── Stage 3a: Chunk & translate（翻訳プロバイダ振り分け） ──────────
+        _provider  = (request.translate_provider or "ollama").lower()
+        _llm_label = translate_model if _provider == "ollama" else f"{_provider}:{translate_model}"
         yield send({"type": "progress", "stage": "llm", "pct": 25,
                     "msg": f"日本語訳を生成中（{_llm_label}）..."})
         try:
             paragraphs_raw = await loop.run_in_executor(
                 None, _llm_chunk_and_translate,
                 transcript, request.ollama_url, translate_model,
-                request.runpod_url, request.runpod_api_key,
+                _provider, request.translate_endpoint, request.translate_api_key,
             )
         except Exception as e:
             yield send({"type": "error", "stage": "llm",
