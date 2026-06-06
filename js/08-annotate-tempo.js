@@ -110,7 +110,15 @@ function extractJsonFromLlm(raw){
   return m ? m[0] : s;
 }
 
-/* ── 1段落アノテーション (Ollama / OpenAI 切替対応) ── */
+function normalizeRunpodUrl(url){
+  let u = (url || '').trim().replace(/\/+$/, '');
+  u = u.replace(/\/(runsync|run)$/, '');
+  if(u.endsWith('/chat/completions')) return u;
+  if(u.endsWith('/openai/v1')) return u + '/chat/completions';
+  return u + '/openai/v1/chat/completions';
+}
+
+/* ── 1段落アノテーション (Ollama / RunPod / OpenAI 切替対応) ── */
 async function annotateOneParagraph(apiKey, para, idx, speed, totalCount){
   const estDurPerWord = {slow:0.55, normal:0.42, fast:0.32, veryfast:0.25}[speed] || 0.35;
   const wordList = para.en.replace(/[,\.!?;:—–]/g,'').split(/\s+/).filter(Boolean);
@@ -171,8 +179,29 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
       if(!resp.ok) throw new Error('HTTP '+resp.status+': '+(await resp.text().catch(()=>'')).slice(0,80));
       const data = await resp.json();
       rawText2 = data.message?.content || data.response || '';
+    } else if(genBackend === 'runpod'){
+      const url   = normalizeRunpodUrl(runpodUrl);
+      const model = runpodModel || 'qwen/qwen3.5-9b';
+      const resp  = await fetch(url, {
+        method:'POST',
+        signal: controller.signal,
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+runpodApiKey},
+        body: JSON.stringify({
+          model, max_tokens:numPredict, temperature:0,
+          chat_template_kwargs:{enable_thinking:false},
+          messages:[
+            {role:'system', content:'You are a pronunciation annotator. Output valid JSON only.'},
+            {role:'user',   content: prompt}
+          ]
+        })
+      });
+      if(!resp.ok){
+        const err = await resp.json().catch(()=>({}));
+        throw new Error(err.error?.message||'HTTP '+resp.status);
+      }
+      rawText2 = (await resp.json()).choices?.[0]?.message?.content||'';
     } else {
-      const model = genModel || 'gpt-4o';
+      const model = genModel || 'gpt-4o-mini';
       const resp = await fetch('https://api.openai.com/v1/chat/completions',{
         method:'POST',
         signal: controller.signal,

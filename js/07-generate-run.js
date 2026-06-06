@@ -6,6 +6,7 @@ async function runGeneration(){
     ? (document.getElementById('gen-apikey')?.value?.trim() || genApiKey)
     : 'ollama';
   if(backend === 'openai' && !key){ showToast('OpenAI APIキーを「設定」タブで入力してください',true); return; }
+  if(backend === 'runpod' && !runpodApiKey){ showToast('RunPod APIキーを「設定」タブで入力してください',true); return; }
   genApiKey = key;
   genBackend = backend;
   persistGenSettings();
@@ -25,10 +26,11 @@ async function runGeneration(){
   setModalStatus(`${paras.length}段落を検出しました。生成開始...`,5);
 
   const results = [];
+  let backendErrorShown = false;
   for(let i=0;i<paras.length;i++){
     if(genAbort){ setModalStatus('キャンセルしました',0); break; }
     const pct = 5 + Math.round((i/paras.length)*90);
-    setModalStatus(`段落 ${i+1}/${paras.length} を処理中...`, pct);
+    setModalStatus(`段落 ${i+1}/${paras.length} を処理中... (${genBackend})`, pct);
     addModalParaItem(i, paras[i].en, 'processing');
 
     try{
@@ -45,10 +47,30 @@ async function runGeneration(){
         addModalParaItem(i, paras[i].en, 'done');
         setModalStatus(`段落${i+1}: 推定データで続行 — ${msg}`, pct, false);
       } else {
-        addModalParaItem(i, paras[i].en, 'error');
-        setModalStatus(`エラー (段落${i+1}): ${msg}`, pct, true);
+        /* バックエンド接続エラー — 初回のみフォールバックダイアログ表示 */
+        if(!backendErrorShown && genBackend !== 'ollama'){
+          backendErrorShown = true;
+          document.getElementById('gen-modal').style.display='none';
+          const go = confirm(
+            `【${genBackend}】でエラーが発生しました。\n\n` +
+            `Ollama（ローカル）で残り ${paras.length - i} 段落を続行しますか？\n` +
+            `　OK     → Ollamaで続行\n` +
+            `　キャンセル → 生成を中止\n\n` +
+            `エラー: ${msg}`
+          );
+          document.getElementById('gen-modal').style.display='flex';
+          if(go){
+            genBackend = 'ollama';
+          } else {
+            genAbort = true;
+          }
+        }
+        if(!genAbort){
+          addModalParaItem(i, paras[i].en, 'error');
+          setModalStatus(`エラー (段落${i+1}): ${msg}`, pct, true);
+        }
+        await sleep(500);
       }
-      await sleep(500);
     }
   }
 
@@ -78,11 +100,12 @@ async function regenerateAnnotationsOnly(){
     showToast('再生成するチャンクがありません。\n先にプロジェクトを読み込むか自動処理を実行してください', true, 4500);
     return;
   }
-  const backend = document.getElementById('gen-backend')?.value || 'ollama';
+  const backend = document.getElementById('gen-backend')?.value || genBackend || 'ollama';
   const key = (backend === 'openai')
     ? (document.getElementById('gen-apikey')?.value?.trim() || genApiKey)
     : 'ollama';
   if(backend === 'openai' && !key){ showToast('OpenAI APIキーを入力してください',true); return; }
+  if(backend === 'runpod' && !runpodApiKey){ showToast('RunPod APIキーを「設定」タブで入力してください',true); return; }
   genApiKey = key; genBackend = backend;
   const speed = document.getElementById('gen-speed')?.value || 'normal';
 
@@ -95,10 +118,11 @@ async function regenerateAnnotationsOnly(){
   setModalStatus(`既存の${src.length}チャンクの発音アノテーションを再生成します...`, 5);
 
   const results = [];
+  let backendErrorShown2 = false;
   for(let i=0;i<src.length;i++){
     if(genAbort){ setModalStatus('キャンセルしました',0); break; }
     const pct = 5 + Math.round((i/src.length)*90);
-    setModalStatus(`チャンク ${i+1}/${src.length} を再生成中...`, pct);
+    setModalStatus(`チャンク ${i+1}/${src.length} を再生成中... (${genBackend})`, pct);
     addModalParaItem(i, src[i].en, 'processing');
     try{
       const annotated = await annotateOneParagraph(key, src[i], i, speed, src.length);
@@ -110,10 +134,26 @@ async function regenerateAnnotationsOnly(){
       addModalParaItem(i, src[i].en, 'done');
     } catch(err){
       const msg = err.name==='AbortError' ? 'タイムアウト(240秒超過)' : err.message;
+      const isRetriable = err.name==='AbortError' ||
+        (typeof err.message==='string' && err.message.startsWith('JSON parse error'));
+      if(!isRetriable && !backendErrorShown2 && genBackend !== 'ollama'){
+        backendErrorShown2 = true;
+        document.getElementById('gen-modal').style.display='none';
+        const go = confirm(
+          `【${genBackend}】でエラーが発生しました。\n\n` +
+          `Ollama（ローカル）で残り ${src.length - i} チャンクを続行しますか？\n` +
+          `　OK     → Ollamaで続行\n` +
+          `　キャンセル → 生成を中止\n\n` +
+          `エラー: ${msg}`
+        );
+        document.getElementById('gen-modal').style.display='flex';
+        if(go){ genBackend = 'ollama'; } else { genAbort = true; }
+      }
+      if(genAbort) break;
       const fb = makeFallbackPara(src[i], i, speed);
       fb.ja = src[i].ja;
       results.push(fb);
-      addModalParaItem(i, src[i].en, 'done');
+      addModalParaItem(i, src[i].en, isRetriable ? 'done' : 'error');
       setModalStatus(`チャンク${i+1}: 推定データで続行 — ${msg}`, pct, false);
       await sleep(400);
     }
