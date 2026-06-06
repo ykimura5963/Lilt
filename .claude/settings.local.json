@@ -1,9 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Yuichiro\\\\Desktop\\\\YK_Development\\\\PRONUNCIATION LAB\" -Recurse -Force)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Yuichiro\\\\Desktop\\\\YK_Development\\\\Lilt\" -Recurse -Force)",
       "Bash(Select-Object FullName, PSIsContainer)",
-      "Bash(Sort-Object FullName)"
+      "Bash(Sort-Object FullName)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
