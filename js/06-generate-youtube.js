@@ -1,0 +1,481 @@
+/* ══════════════════════════════════════════════════════════
+   ANNOTATION GENERATOR
+   フロー:
+   1. 文字起こしテキストをペースト
+   2. 段落ごとに LLM API へリクエスト
+      - プロンプト: 文字起こし段落 + 話速推定 + アノテーションスキーマ
+      - レスポンス: {words:[{t,ws,stress,inton,elision,syl,note},...]} のJSON
+   3. 全段落完了後 PARAS を上書き → renderTranscript()
+   4. Chrome/Edge: File System Access API でフォルダ保存
+      Safari: Blob ダウンロード
+   5. annotation.json のスキーマ:
+      { version:"1", contentBase:"xxx", generatedAt:"ISO", paras:[...PARAS] }
+══════════════════════════════════════════════════════════ */
+
+let genApiKey    = '';
+let genModel     = 'qwen3.5:2b';
+let genBackend   = 'ollama';
+let genOllamaUrl = 'http://localhost:11434';
+let genAbort    = false;
+let fsaDirHandle  = null;  /* 保存先フォルダハンドル */
+let currentBase   = '';    /* 動画ファイルのベース名 */
+
+/* ── YouTube自動処理 状態変数 ── */
+let ytAutoUrl     = '';
+let ytBackendUrl  = 'http://localhost:8000';
+let ytOllamaModel = 'qwen3.5:4b';
+let ytLlmBackend  = 'ollama';   /* 'ollama' | 'runpod' */
+let runpodUrl     = '';
+let runpodApiKey  = '';
+
+/* ── プロジェクト一覧を取得してDOMに表示 ── */
+async function loadYouTubeProjects(){
+  const listEl = document.getElementById('yt-proj-list');
+  if(!listEl) return;
+  listEl.innerHTML = '<span style="font-size:11px;color:var(--muted);font-family:var(--mono)">読み込み中...</span>';
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  try{
+    const resp = await fetch(`${bkUrl}/projects`);
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const projects = await resp.json();
+    if(!projects.length){
+      listEl.innerHTML = '<span style="font-size:11px;color:var(--muted);font-family:var(--mono)">保存済みプロジェクトなし</span>';
+      return;
+    }
+    listEl.innerHTML = projects.map(p=>`
+      <div class="yt-proj-item" id="proj-row-${p.video_id}">
+        <span class="yt-proj-name" title="${p.video_id}">${p.title||p.video_id}</span>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          ${p.has_data ? `<button class="yt-proj-load" onclick="loadYouTubeProject('${p.video_id}')">読込</button>` : '<span style="font-size:10px;color:var(--muted);padding:2px 4px">処理中</span>'}
+          <button class="yt-proj-del" onclick="deleteYouTubeProject('${p.video_id}')" title="削除">🗑</button>
+        </div>
+      </div>`).join('');
+  }catch(err){
+    listEl.innerHTML = `<span style="font-size:11px;color:var(--danger,#f87171);font-family:var(--mono)">取得失敗（バックエンドが起動していますか？）</span>`;
+  }
+}
+
+/* ── 指定プロジェクトのdata.jsonとvideoを読み込む ── */
+async function loadYouTubeProject(videoId){
+  const bkUrl   = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const dataUrl = `${bkUrl}/files/${videoId}/data.json`;
+  const vidUrl  = `${bkUrl}/files/${videoId}/video.mp4`;
+  try{
+    const resp = await fetch(dataUrl);
+    if(!resp.ok) throw new Error('data.json取得エラー: HTTP '+resp.status);
+    const data = await resp.json();
+    if(!Array.isArray(data.paras)) throw new Error('parasフィールドがありません');
+
+    PARAS.length = 0;
+    data.paras.forEach((p,i)=>{
+      p.id  = i;
+      const estEnd = p.end ?? (p.start + Math.max(2,(p.en||'').split(/\s+/).filter(Boolean).length*0.35));
+      p.end = estEnd;
+      p.words = buildWordsFromParsed(p.words||[], p, 0.35);
+      PARAS.push(p);
+    });
+
+    const lastPara = PARAS[PARAS.length-1];
+    if(lastPara) totalDur = lastPara.end;
+    renderTranscript();
+
+    /* 動画をバックエンドURLから読み込む */
+    const vid = document.getElementById('vid');
+    vid.src = vidUrl;
+    vid.load();
+    document.getElementById('local-wrap').style.display = '';
+    document.getElementById('yt-wrap').style.display    = 'none';
+    document.getElementById('chk-yt').checked = false;
+    document.getElementById('no-file').style.display = 'none';
+    document.getElementById('file-name').textContent  = videoId;
+    document.getElementById('header-sub').textContent = data.contentBase || videoId;
+    currentBase = videoId;
+
+    /* data.md も取得して Generate テキストエリアへ */
+    try{
+      const mdResp = await fetch(`${bkUrl}/files/${videoId}/data.md`);
+      if(mdResp.ok){
+        const parsed = parseMdToTranscript(await mdResp.text());
+        if(parsed) window._pendingMdTranscript = parsed;
+      }
+    } catch(e){ /* md取得失敗は無視 */ }
+
+    window._localVideoFile = null; /* バックエンド動画はローカルFileではない */
+    showToast(`✓ ${videoId} を読み込みました（${data.paras.length}段落）`, false, 4000);
+  }catch(err){
+    showToast('読み込みエラー: '+err.message, true, 5000);
+  }
+}
+
+/* ── YouTube全自動処理をSSEで実行 ── */
+async function runYouTubeAutoProcess(){
+  const url       = document.getElementById('yt-auto-url')?.value?.trim()     || ytAutoUrl;
+  const model     = document.getElementById('yt-ollama-model')?.value?.trim() || ytOllamaModel;
+  const bkUrl     = document.getElementById('yt-backend-url')?.value?.trim()  || ytBackendUrl;
+  const annModel  = genModel || 'qwen3.5:2b';
+  const ollamaUrl = genOllamaUrl || 'http://localhost:11434';
+  /* RunPod: 設定タブの入力欄 or 状態変数 */
+  const rpUrl     = document.getElementById('yt-runpod-url')?.value?.trim()  || runpodUrl;
+  const rpKey     = document.getElementById('yt-runpod-key')?.value?.trim()  || runpodApiKey;
+  const useRunpod = ytLlmBackend === 'runpod';
+
+  if(!url){ showToast('YouTube URLを入力してください', true); return; }
+  if(useRunpod && !rpKey){ showToast('RunPod API Keyを設定タブで入力してください', true); return; }
+
+  ytBackendUrl = bkUrl;
+  ytOllamaModel = model;
+  if(useRunpod){ runpodUrl = rpUrl; runpodApiKey = rpKey; }
+  persistGenSettings();
+
+  const btn     = document.getElementById('yt-auto-btn');
+  const progWrp = document.getElementById('yt-prog-wrap');
+  const progFil = document.getElementById('yt-prog-fill');
+  const statusEl= document.getElementById('yt-status-text');
+
+  if(btn)     btn.disabled = true;
+  if(progWrp){ progWrp.style.display='block'; }
+  if(progFil) progFil.style.width='0%';
+  if(statusEl){ statusEl.textContent='処理を開始しています...'; statusEl.className='yt-status'; }
+
+  let response;
+  try{
+    response = await fetch(`${bkUrl}/process`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        url,
+        model,                         /* 後方互換 */
+        translate_model: model,        /* 翻訳モデル */
+        annotate_model:  annModel,     /* 注釈モデル（現在未使用・後方互換） */
+        ollama_url: ollamaUrl,
+        runpod_url:     useRunpod ? rpUrl : '',
+        runpod_api_key: useRunpod ? rpKey : '',
+      })
+    });
+    if(!response.ok){
+      const errData = await response.json().catch(()=>({}));
+      throw new Error(errData.detail || 'HTTP '+response.status);
+    }
+  }catch(err){
+    if(statusEl){ statusEl.textContent='接続エラー: '+err.message; statusEl.className='yt-status err'; }
+    if(btn) btn.disabled=false;
+    return;
+  }
+
+  const reader  = response.body.getReader();
+  const decoder = new TextDecoder();
+  let   buf     = '';
+  try{
+    while(true){
+      const {done,value} = await reader.read();
+      if(done) break;
+      buf += decoder.decode(value,{stream:true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')) continue;
+        try{ handleYtAutoEvent(JSON.parse(line.slice(6)), progFil, statusEl); }
+        catch(e){ /* ignore malformed JSON */ }
+      }
+    }
+  }catch(err){
+    if(statusEl){ statusEl.textContent='ストリームエラー: '+err.message; statusEl.className='yt-status err'; }
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+
+/* ── SSEイベントハンドラ ── */
+function handleYtAutoEvent(evt, progFil, statusEl){
+  if(evt.type==='progress'||evt.type==='warning'){
+    if(progFil && typeof evt.pct==='number') progFil.style.width=evt.pct+'%';
+    if(statusEl){ statusEl.textContent=evt.msg||''; statusEl.className='yt-status'+(evt.type==='warning'?' err':''); }
+  }else if(evt.type==='error'){
+    if(statusEl){ statusEl.textContent='エラー: '+evt.msg; statusEl.className='yt-status err'; }
+    showToast('処理エラー: '+evt.msg, true, 6000);
+  }else if(evt.type==='done'){
+    if(progFil) progFil.style.width='100%';
+    if(statusEl){ statusEl.textContent=evt.msg||'完了！'; statusEl.className='yt-status ok'; }
+    showToast(evt.msg||'処理が完了しました！', false, 4000);
+    if(evt.video_id){
+      loadYouTubeProject(evt.video_id);
+      loadYouTubeProjects();
+    }
+  }
+}
+
+/* ── プロジェクト削除 ── */
+async function deleteYouTubeProject(videoId){
+  if(!confirm(`「${videoId}」を削除しますか？\nフォルダごと完全に削除されます。`)) return;
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  try{
+    const resp = await fetch(`${bkUrl}/projects/${videoId}`, {method:'DELETE'});
+    if(!resp.ok){
+      const err = await resp.json().catch(()=>({}));
+      throw new Error(err.detail || 'HTTP '+resp.status);
+    }
+    /* 行をフェードアウトして削除 */
+    const row = document.getElementById('proj-row-'+videoId);
+    if(row){ row.style.transition='opacity .3s'; row.style.opacity='0'; setTimeout(()=>row.remove(), 300); }
+    showToast(`🗑 ${videoId} を削除しました`, false, 3000);
+  }catch(err){
+    showToast('削除エラー: '+err.message, true, 4000);
+  }
+}
+
+/* ── FSA（File System Access API）対応判定 ── */
+function fsaSupported(){ return typeof window.showDirectoryPicker === 'function'; }
+
+/* ── 生成タブHTML（生成アクションのみ。設定は「設定」タブへ集約） ── */
+function generateHTML(){
+  return `
+<div class="yt-auto-section">
+  <div class="yt-auto-title">YouTube 全自動処理（PC）</div>
+  <div class="gen-section">
+    <div class="gen-label">YouTube URL</div>
+    <input class="gen-input" id="yt-auto-url" placeholder="https://www.youtube.com/watch?v=..."
+      oninput="ytAutoUrl=this.value">
+  </div>
+  <div class="gen-status" id="backend-health" style="margin-bottom:6px">接続確認中...</div>
+  <button class="gen-btn" id="yt-auto-btn" onclick="runYouTubeAutoProcess()"
+    style="border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.1);color:var(--a2)">
+    ▶ 自動処理開始
+  </button>
+  <div class="yt-prog-wrap" id="yt-prog-wrap"><div class="yt-prog-fill" id="yt-prog-fill"></div></div>
+  <div class="yt-status" id="yt-status-text"></div>
+  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">バックエンドURL・翻訳/注釈モデルは「設定」タブで変更できます</div>
+  <hr class="gen-divider" style="margin-top:.75rem">
+  <div class="gen-label" style="margin-bottom:6px">保存済みプロジェクト</div>
+  <div id="yt-proj-list"><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">読み込み中...</span></div>
+  <button class="gen-btn danger" onclick="loadYouTubeProjects()" style="margin-top:6px;font-size:10px">
+    ↻ 一覧を更新
+  </button>
+</div>
+<div class="lcard">
+  <div class="gen-section">
+    <div class="gen-label">文字起こしテキスト</div>
+    <textarea class="gen-textarea" id="gen-transcript" rows="10"
+      placeholder="ペースト or 動画バーの「📝 MD読込」から&#10;0:00&#10;Hi. After a chaotic few weeks...&#10;0:04&#10;And just real quick...&#10;&#10;※ 0:00 = 英文の開始秒。[Applause]等のみの区間はスキップ"></textarea>
+  </div>
+  <div class="gen-section">
+    <div class="gen-label">動画の話速（参考情報）</div>
+    <select class="gen-input" id="gen-speed">
+      <option value="slow">ゆっくり（学習用・朗読）</option>
+      <option value="normal" selected>普通（会話・講義）</option>
+      <option value="fast">速め（Jesse Itzler等・自然な会話）</option>
+      <option value="veryfast">かなり速い（ネイティブ同士の会話）</option>
+    </select>
+  </div>
+  <hr class="gen-divider">
+  <button class="gen-btn" id="gen-run-btn" onclick="runGeneration()">
+    ✦ アノテーション生成を開始
+  </button>
+  <button class="gen-btn" id="gen-regen-btn" onclick="regenerateAnnotationsOnly()"
+    style="margin-top:8px;border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.08);color:var(--a2)"
+    title="読み込み済みのチャンク（英文・和訳・時刻）はそのままに、発音アノテーションだけを再生成します">
+    ♺ アノテーションのみ再生成
+  </button>
+  <div class="gen-status" id="gen-regen-hint" style="margin-top:4px">自動処理済みのプロジェクトを読み込んだ後、発音記号だけ作り直せます</div>
+  <div class="gen-prog-wrap" id="gen-prog-wrap">
+    <div class="gen-prog-bg"><div class="gen-prog-fill" id="gen-prog-fill"></div></div>
+    <div class="gen-status" id="gen-status-text"></div>
+  </div>
+</div>
+<div class="lcard">
+  <div class="gen-label">既存アノテーションJSONを読み込む</div>
+  <div class="gen-row">
+    <button class="gen-btn danger" onclick="loadAnnotationFile()">📂 JSONを選択</button>
+    <input type="file" id="anno-file-input" accept=".json,application/json" style="display:none" onchange="onAnnotationFileLoad(this)">
+  </div>
+  <div class="gen-status" id="anno-load-status"></div>
+</div>`;
+}
+
+/* ── 設定タブHTML（全設定を集約） ── */
+function settingsHTML(){
+  const fsa = fsaSupported();
+  return `
+<div class="lcard">
+  <div class="gen-section">
+    <div class="gen-label">AI バックエンド（ブラウザ内生成）</div>
+    <select class="gen-input" id="gen-backend" onchange="onBackendChange(this.value)" style="margin-bottom:6px">
+      <option value="ollama" selected>Ollama (ローカル)</option>
+      <option value="openai">OpenAI API</option>
+    </select>
+    <div id="ollama-settings">
+      <div class="gen-label" style="margin-top:6px">Ollama URL</div>
+      <input class="gen-input" id="gen-ollama-url" value="${genOllamaUrl}"
+        oninput="genOllamaUrl=this.value" onchange="persistGenSettings()" placeholder="http://localhost:11434">
+      <div class="gen-label" style="margin-top:6px">注釈モデル（発音アノテーション）</div>
+      <input class="gen-input" id="gen-model-name" value="${genModel}"
+        oninput="genModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:2b">
+      <div class="gen-row" style="margin-top:8px">
+        <button class="gen-btn danger" onclick="testOllamaConnection()">⚡ 接続テスト</button>
+      </div>
+      <div class="gen-status" id="ollama-test-status" style="margin-top:4px"></div>
+      <div style="margin-top:10px;padding:10px;background:rgba(245,200,66,.06);border:.5px solid rgba(245,200,66,.2);border-radius:6px;font-size:11px;font-family:var(--mono);line-height:2;color:var(--muted)">
+        <div style="color:var(--accent);margin-bottom:2px">⚠ Failed to fetch の原因と対処</div>
+        <div style="color:var(--text);margin-bottom:6px">file:// で開くとブラウザがlocalhost通信をブロックします。<br>このアプリを<b>ローカルサーバー経由</b>で開いてください：</div>
+        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:4px;cursor:pointer;color:var(--text)" onclick="copyCmd('pyserver')" title="クリックでコピー">
+          ① HTMLと同じフォルダでターミナルを開き実行<br>
+          <span style="color:var(--accent)">python -m http.server 8080</span>
+        </div>
+        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:6px;cursor:pointer;color:var(--accent)" onclick="copyCmd('appurl')" title="クリックでコピー">
+          ② ブラウザで開く URL（クリックでコピー）<br>
+          http://localhost:8080/pronunciation_learner.html
+        </div>
+        <div style="color:var(--text);margin-bottom:4px">③ Ollama も ORIGINS 設定が必要（一度だけ）：</div>
+        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:4px;cursor:pointer;color:var(--text)" onclick="copyCmd('powershell')" title="クリックでコピー">
+          <span style="color:var(--muted)">新しいターミナルで：</span><br>
+          <span style="color:var(--accent)">$env:OLLAMA_ORIGINS="http://localhost:8080"; ollama serve</span>
+        </div>
+        <div style="color:var(--muted)">設定後「接続テスト」で確認してください</div>
+      </div>
+    </div>
+    <div id="openai-settings" style="display:none">
+      <div class="gen-label" style="margin-top:6px">OpenAI APIキー</div>
+      <input class="gen-input" type="password" id="gen-apikey" placeholder="sk-..."
+        value="${genApiKey}" oninput="genApiKey=this.value" autocomplete="off">
+      <div class="gen-label" style="margin-top:6px">モデル</div>
+      <select class="gen-input" id="gen-openai-model" onchange="genModel=this.value">
+        <option value="gpt-4o" selected>gpt-4o</option>
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4-turbo">gpt-4-turbo</option>
+      </select>
+    </div>
+  </div>
+</div>
+<div class="lcard">
+  <div class="gen-section">
+    <div class="gen-label">YouTube全自動 バックエンド（FastAPI）</div>
+    <input class="gen-input" id="yt-backend-url" value="${ytBackendUrl}"
+      oninput="ytBackendUrl=this.value" onchange="persistGenSettings();checkBackendHealth()" placeholder="http://localhost:8000">
+    <div class="gen-status" id="backend-health" style="margin-top:6px">接続確認中...</div>
+    <div class="gen-label" style="margin-top:10px">翻訳 LLM の接続先</div>
+    <select class="gen-input" id="yt-llm-backend" onchange="onYtLlmBackendChange(this.value)">
+      <option value="ollama" ${ytLlmBackend==='ollama'?'selected':''}>Ollama（ローカル）</option>
+      <option value="runpod" ${ytLlmBackend==='runpod'?'selected':''}>RunPod Serverless</option>
+    </select>
+    <div id="yt-ollama-section" style="${ytLlmBackend==='runpod'?'display:none':''}">
+      <div class="gen-label" style="margin-top:6px">翻訳モデル（日本語訳・全自動）</div>
+      <input class="gen-input" id="yt-ollama-model" value="${ytOllamaModel}"
+        oninput="ytOllamaModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:4b">
+    </div>
+    <div id="yt-runpod-section" style="${ytLlmBackend==='runpod'?'':'display:none'}">
+      <div class="gen-label" style="margin-top:6px">RunPod Endpoint URL</div>
+      <input class="gen-input" id="yt-runpod-url" value="${runpodUrl}"
+        oninput="runpodUrl=this.value" onchange="persistGenSettings()"
+        placeholder="https://api.runpod.ai/v2/.../runsync">
+      <div class="gen-label" style="margin-top:6px">RunPod API Key</div>
+      <input class="gen-input" type="password" id="yt-runpod-key" value="${runpodApiKey}"
+        oninput="runpodApiKey=this.value" onchange="persistGenSettings()"
+        placeholder="rpa_..." autocomplete="off">
+    </div>
+  </div>
+</div>
+<div class="lcard">
+  <div class="gen-section">
+    <div class="gen-label">親フォルダ（保存先）</div>
+    <div class="gen-row">
+      <button class="gen-btn danger" id="folder-pick-btn" onclick="selectSaveFolder()" ${fsa?'':'disabled style="opacity:.5;cursor:not-allowed"'}>📁 親フォルダを選択</button>
+      <button class="gen-btn danger" onclick="clearSaveFolder()" style="font-size:10px">解除</button>
+    </div>
+    <div class="gen-status" id="folder-status"></div>
+    <div style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.9;margin-top:6px">
+      選択した親フォルダ内に<b>動画ごとのサブフォルダ</b>を自動作成し、<br>
+      <span style="color:var(--a2)">動画 / data.json / data.md</span> を保存します（リロード後も記憶）。
+      ${fsa?'':'<br><span style="color:var(--danger)">⚠ このブラウザはフォルダ保存に非対応です（Chrome/Edge 推奨）。保存は<b>ダウンロード</b>、読込は<b>ファイル選択</b>で全ブラウザ動作します。</span>'}
+    </div>
+  </div>
+</div>`;
+}
+
+/* ── YouTube全自動の翻訳LLM切替（Ollama ↔ RunPod） ── */
+function onYtLlmBackendChange(val){
+  ytLlmBackend = val;
+  const olSec = document.getElementById('yt-ollama-section');
+  const rpSec = document.getElementById('yt-runpod-section');
+  if(olSec) olSec.style.display = val === 'runpod' ? 'none' : '';
+  if(rpSec) rpSec.style.display = val === 'runpod' ? ''     : 'none';
+  saveSettings({ytLlmBackend});
+}
+
+/* ── ブラウザ内生成のバックエンド切替 ── */
+function onBackendChange(val){
+  genBackend = val;
+  const ol = document.getElementById('ollama-settings');
+  const oa = document.getElementById('openai-settings');
+  if(ol) ol.style.display = val==='ollama' ? '' : 'none';
+  if(oa) oa.style.display = val==='openai' ? '' : 'none';
+  saveSettings({genBackend});
+}
+
+/* ── Ollama接続テスト ── */
+async function testOllamaConnection(){
+  const statusEl = document.getElementById('ollama-test-status');
+  const url = (genOllamaUrl||'http://localhost:11434').replace(/\/$/,'');
+  if(statusEl){ statusEl.textContent='テスト中...'; statusEl.className='gen-status'; }
+  try{
+    /* GET /api/tags でモデル一覧取得 → 接続確認 */
+    const resp = await fetch(url+'/api/tags', {method:'GET'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const data = await resp.json();
+    const models = (data.models||[]).map(m=>m.name).join(', ') || '(モデルなし)';
+    if(statusEl){
+      statusEl.textContent = '✓ 接続OK — モデル: '+models;
+      statusEl.className = 'gen-status ok';
+    }
+    /* モデル名入力欄に最初のモデルをセット（空の場合） */
+    const mi = document.getElementById('gen-model-name');
+    if(mi && !mi.value && data.models?.length){
+      mi.value = data.models[0].name;
+      genModel  = data.models[0].name;
+    }
+  } catch(err){
+    if(statusEl){
+      statusEl.textContent = '✗ 接続失敗: '+err.message+' → CORS設定を確認してください';
+      statusEl.className = 'gen-status err';
+    }
+  }
+}
+
+/* ── コマンドをクリップボードにコピー ── */
+function copyCmd(type){
+  const cmds = {
+    powershell: '$env:OLLAMA_ORIGINS="http://localhost:8080"; ollama serve',
+    setx:       'setx OLLAMA_ORIGINS "http://localhost:8080" & ollama serve',
+    pyserver:   'python -m http.server 8080',
+    appurl:     'http://localhost:8080/pronunciation_learner.html'
+  };
+  const text = cmds[type] || '';
+  navigator.clipboard.writeText(text).then(()=>{
+    showToast('コピーしました: '+text, false, 2500);
+  }).catch(()=>{
+    showToast(text, false, 4000);
+  });
+}
+
+/* ── 親フォルダ選択（FSA API・非対応ブラウザはダウンロード保存にフォールバック） ── */
+async function selectSaveFolder(){
+  if(!fsaSupported()){
+    showToast('このブラウザはフォルダ保存に非対応です（Chrome/Edge推奨）。\n保存はダウンロードになります。',false,4500);
+    return;
+  }
+  try{
+    fsaDirHandle = await window.showDirectoryPicker({mode:'readwrite'});
+    await idbSetHandle(fsaDirHandle);   /* リロード後も記憶 */
+    refreshFolderStatus();
+    showToast('✓ 親フォルダを設定: '+fsaDirHandle.name,false,3000);
+  } catch(e){
+    if(e.name!=='AbortError') showToast('フォルダ選択キャンセル',false,2000);
+  }
+}
+
+/* ── 親フォルダ設定を解除 ── */
+async function clearSaveFolder(){
+  fsaDirHandle = null;
+  await idbDelHandle();
+  refreshFolderStatus();
+  showToast('親フォルダ設定を解除しました（以後はダウンロード保存）',false,3000);
+}
+
