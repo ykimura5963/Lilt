@@ -351,7 +351,7 @@ function settingsHTML(){
         </div>
         <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:6px;cursor:pointer;color:var(--accent)" onclick="copyCmd('appurl')" title="クリックでコピー">
           ② ブラウザで開く URL（クリックでコピー）<br>
-          http://localhost:8080/pronunciation_learner.html
+          http://localhost:8080/index.html
         </div>
         <div style="color:var(--text);margin-bottom:4px">③ Ollama も ORIGINS 設定が必要（一度だけ）：</div>
         <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:4px;cursor:pointer;color:var(--text)" onclick="copyCmd('powershell')" title="クリックでコピー">
@@ -505,7 +505,7 @@ function copyCmd(type){
     powershell: '$env:OLLAMA_ORIGINS="http://localhost:8080"; ollama serve',
     setx:       'setx OLLAMA_ORIGINS "http://localhost:8080" & ollama serve',
     pyserver:   'python -m http.server 8080',
-    appurl:     'http://localhost:8080/pronunciation_learner.html'
+    appurl:     'http://localhost:8080/index.html'
   };
   const text = cmds[type] || '';
   navigator.clipboard.writeText(text).then(()=>{

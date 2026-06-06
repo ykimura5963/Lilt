@@ -19,7 +19,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Pronunciation Lab API")
+app = FastAPI(title="Lilt API")
 
 # CORS: 既定は全許可（localhost開発用）。本番では ALLOWED_ORIGINS="http://a,http://b" で制限可能
 _origins_env = os.environ.get("ALLOWED_ORIGINS", "*").strip()
@@ -81,7 +81,7 @@ def extract_video_id(url: str) -> str:
 
 
 def assign_word_timings(words: list, start: float, end: float) -> list:
-    """Mirrors assignWordTimings() in pronunciation_learner.html."""
+    """Mirrors assignWordTimings() in index.html."""
     n = len(words)
     if not n:
         return words
@@ -96,7 +96,7 @@ def assign_word_timings(words: list, start: float, end: float) -> list:
     return result
 
 
-# ── テンポ（リズム）モデル: pronunciation_learner.html と同一ロジック ──────────
+# ── テンポ（リズム）モデル: index.html と同一ロジック ──────────
 SPEECH_TEMPO = {
     "base_per_word": 0.08,
     "per_syllable":  0.17,
@@ -518,7 +518,7 @@ def _openai_compatible_chat(
     # OpenRouter 推奨ヘッダ（任意・ランキング用）
     if "openrouter.ai" in url:
         headers["HTTP-Referer"] = "http://localhost:8080"
-        headers["X-Title"]      = "Pronunciation Lab"
+        headers["X-Title"]      = "Lilt"
     resp = http_requests.post(url, headers=headers, json=payload, timeout=300)
     if not resp.ok:
         raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")

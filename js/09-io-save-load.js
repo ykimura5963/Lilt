@@ -149,7 +149,7 @@ async function tryAutoLoadAnnotation(base){
 /* switchTab は上で直接拡張済み */
 
 /* ══ 親フォルダハンドルの永続化（IndexedDB） ══ */
-const _IDB_DB='pronlab', _IDB_STORE='handles', _IDB_KEY='parentDir';
+const _IDB_DB='lilt', _IDB_STORE='handles', _IDB_KEY='parentDir';
 function _idb(){
   return new Promise((res,rej)=>{
     const r=indexedDB.open(_IDB_DB,1);
