@@ -56,6 +56,8 @@ function renderTranscript(){
     html+=`<div class="para-head">`;
     html+=`<div class="para-time">${mm}:${ss}</div>`;
     html+=`<button type="button" class="para-repeat${chunkRepeatOn&&chunkRepeatPi===p.id?' on':''}" data-pi="${p.id}" onclick="setChunkRepeat(${p.id},event)" title="この段落をリピート再生">🔁</button>`;
+    html+=`<button type="button" class="sh-rec" data-pi="${p.id}" onclick="shadowRecordToggle(${p.id},event)" title="このチャンクを録音（クリックで開始/停止）">🎤</button>`;
+    html+=`<span class="sh-controls" id="sh-${p.id}"></span>`;
     html+=`</div>`;
     html+=`<div class="sentence" id="sent-${p.id}">`;
     p.words.forEach((w,wi)=>{
@@ -80,6 +82,9 @@ function renderTranscript(){
   cacheElements();
   applyFontScale();
   prevLitKey=null; currentPara=-1;
+
+  /* シャドーイング操作群（録音済みなら ▶/A·B を復元） */
+  if(typeof refreshAllShadowControls==='function') refreshAllShadowControls();
 
   /* スマホ用フレーズ更新 */
   updateMobilePhrases();

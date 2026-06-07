@@ -99,6 +99,9 @@
 
 <div id="gen-modal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(12,13,15,.92);align-items:center;justify-content:center;"><div style="background:var(--surf2);border:.5px solid var(--bd2);border-radius:12px;padding:2rem;width:min(440px,90vw);display:flex;flex-direction:column;gap:1rem;"><div style="font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.08em">ANNOTATION GENERATOR</div><div id="modal-status" style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.8;min-height:44px"></div><div style="background:var(--bd);border-radius:4px;overflow:hidden;height:4px"><div id="modal-prog" style="height:100%;background:var(--accent);width:0%;transition:width .4s"></div></div><div id="modal-para-list" style="font-family:var(--mono);font-size:10px;color:var(--muted);max-height:120px;overflow-y:auto;line-height:2"></div><button id="modal-cancel" onclick="cancelGeneration()" style="align-self:flex-start;font-family:var(--mono);font-size:11px;padding:4px 12px;border-radius:5px;border:.5px solid var(--bd2);background:transparent;color:var(--muted);cursor:pointer;">キャンセル</button></div></div>
 <div id="toast"></div>
+<!-- シャドーイング: 学習者録音の再生用（非表示）＋録音前カウントイン表示 -->
+<audio id="rec-audio" preload="auto" style="display:none"></audio>
+<div id="sh-countin"></div>
 
 <script src="js/01-data.js"></script>
 <script src="js/02-state.js"></script>
@@ -109,7 +112,8 @@
 <script src="js/07-generate-run.js"></script>
 <script src="js/08-annotate-tempo.js"></script>
 <script src="js/09-io-save-load.js"></script>
-<script src="js/10-init.js"></script>
+<script src="js/10-shadowing.js"></script>
+<script src="js/11-init.js"></script>
 
 </body>
 </html>

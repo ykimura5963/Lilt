@@ -20,6 +20,22 @@
 
 ---
 
+## [1.2.0] - 2026-06-07
+
+### Added（追加）
+- **シャドーイング Tier 1 / Step 1：チャンク録音 + A/B 比較**（`js/10-shadowing.js` 新規）。
+  - 各チャンクのヘッダに **🎤 録音**ボタンを追加。クリックで**カウントイン（3·2·1）→ 録音 → チャンク長で自動停止**。録音中は 🎤 が赤く点滅し、**VU メーター**で入力レベルを表示。
+  - 録音後は **▶モデル / ▶自分 / A·B（交互再生）** ボタンを表示。モデルは既存の区間シーク（`jumpTo`）で再生し、自分の声は隠し `<audio>` で**ピッチ保持・再生速度連動**で再生。
+  - **マイク許可エラー**（不許可／未検出／非対応）を明示するトーストを表示。`MediaRecorder` の形式は `isTypeSupported` で**フォールバック**（webm/opus → webm → mp4）。
+  - 録音はすべて**ブラウザ内（メモリ）**に留まり、サーバー送信はしない。
+- スクリプト構成：`js/10-init.js` を `js/11-init.js` にリネームし、`js/10-shadowing.js` を init 直前に読み込み。
+
+### Notes（補足）
+- 本リリースは Tier 1 の Step 1（MVP）。練習ループ（聴く→間→録音→比較）・波形オーバーレイ・メトロノーム・永続化は後続ステップで追加予定。
+- モデル波形・尺差比較はローカル/バックエンド配信メディアが対象（YouTube iframe は音声バッファ取得不可）。
+
+---
+
 ## [1.1.0] - 2026-06-07
 
 ### Changed（変更）
@@ -55,6 +71,7 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ykimura5963/Lilt/releases/tag/v1.0.0
