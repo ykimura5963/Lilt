@@ -32,6 +32,12 @@
 - レイヤー独立トグル（強弱 / 抑揚 / 消音 / ★リズム）
 - 英語・日本語の対訳表示
 
+**シャドーイング練習（リプロダクション）** ※Tier 1 / Step 1
+- ☆**チャンク録音（🎤）** — 各チャンクヘッダから録音。**カウントイン（3·2·1）→ 録音 → チャンク長で自動停止**。録音中は 🎤 赤点滅＋**VUメーター**で入力レベル表示
+- ☆**A/B 比較** — 録音後に **▶モデル / ▶自分 / A·B（交互再生）**。モデルは区間シーク再生、自分の声は**ピッチ保持・再生速度連動**で再生
+- ☆マイク許可エラーの明示、`MediaRecorder` 形式の自動フォールバック（webm/opus→webm→mp4）。録音は**ブラウザ内（メモリ）のみ**でサーバー送信なし
+- （後続予定：練習ループ＝聴く→間→録音→比較 ／ 波形オーバーレイ ／ メトロノーム ／ 録音の永続化）
+
 **生成・データ管理**
 - **YouTube全自動**パイプライン（バックエンド連携、SSEでリアルタイム進捗バー）。☆**英文はYouTube字幕をそのまま使用**し、LLMは**日本語訳のみ**に使用（発音アノテーションはバックエンドのルールベースで即時生成。旧「翻訳4b／注釈2bのモデル分離」は廃止）
 - ☆**翻訳プロバイダの統合**：旧「YouTube全自動」と「ブラウザ内生成」の2系統設定を**1つの共通設定に統合**。**Ollama / RunPod / OpenRouter / OpenAI** の4種を OpenAI互換で切替（接続テスト付き）。フロント（`resolveTranslateProvider`/`annotateOneParagraph`）とバックエンド（`_translate_chat`）でパラメータ整合（runpod=`enable_thinking:false`、openrouter=`reasoning.enabled:false`＋`HTTP-Referer`/`X-Title`）
@@ -48,7 +54,7 @@
 
 **インフラ・保守性（★今セッション）**
 - ★`start.bat` ワンクリック起動（ffmpeg自動導入 → Ollama起動＋CPU推論チューニング `KEEP_ALIVE=30m`/`NUM_PARALLEL=1` → サーバー2種＋ブラウザ）
-- ★コード分割：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01〜10`（順序付きクラシックスクリプト）
+- ★コード分割：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01〜11`（順序付きクラシックスクリプト。☆`10-shadowing.js` 追加・旧 `10-init.js`→`11-init.js`）
 - ★`syncHighlight` の DOM 要素キャッシュ化（再生ホットパス最適化）
 - ★バックエンド：`/health`、`ALLOWED_ORIGINS`、ffmpegプリフライト、空字幕ガード
 
@@ -160,7 +166,7 @@
 
 ### 実装ステップ
 
-**Step 1 — 録音 + 単チャンク A/B（MVP）**
+**Step 1 — 録音 + 単チャンク A/B（MVP）** … ✅ **実装済み（v1.2.0 / PR #4）**
 - `10-shadowing.js`：`startRec(paraId)` / `stopRec()` / `playModel(paraId)` / `playRecording(paraId[,take])` / `toggleAB(paraId)`。
 - 録音区間は `PARAS[id].start..end`。☆改善：**チャンク長ぶんで自動停止**（`recTailMs` の余白付き）＝停止ボタン不要。録音中は **🎤 を赤表示＋簡易VUメーター**（`AnalyserNode`）で入力レベルを可視化。
 - ☆改善：**カウントイン（3·2·1）**を録音前に表示／発音し、頭切れを防止。
