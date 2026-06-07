@@ -20,6 +20,16 @@
 
 ---
 
+## [1.4.1] - 2026-06-07
+
+### Fixed（修正）
+- 翻訳/再翻訳で LLM が **空・非JSON・末尾切れ**の応答を返すとそのウィンドウが丸ごと失敗していた問題を修正（例：`Retranslate window 4/6 失敗: JSON unparseable...`）。
+  - 解析を寛容化（`{"translations":[...]}` / 素の配列 `[...]` / 末尾欠けの補修に対応、空応答は明示エラー）。解析失敗時は **raw 応答の先頭をログ出力**して原因を追えるように。
+  - 再翻訳は、解析失敗・件数不足のウィンドウを **二分割で再試行 → 最終的に1文ずつ翻訳**（JSONを使わず訳文のみ取得）するフォールバックを追加。1文でも失敗した箇所だけ英語のまま残す。
+  - 翻訳出力の `num_predict` を増量（`語数×6+512`）し、日本語訳の途中切れを抑制。
+
+---
+
 ## [1.4.0] - 2026-06-07
 
 ### Added（追加）
@@ -100,7 +110,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0

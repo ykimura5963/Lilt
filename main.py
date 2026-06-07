@@ -19,7 +19,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.4.0"
+LILT_VERSION = "1.4.1"
 
 app = FastAPI(title="Lilt API")
 
@@ -271,26 +271,36 @@ Output ONLY valid complete JSON in this exact format (same length and order as t
 {"translations":["日本語訳1","日本語訳2"]}"""
 
 
-def _repair_translations_json(raw: str) -> str:
-    """Try to salvage a truncated {"translations":[...]} JSON string."""
-    cleaned = _extract_json(raw)
+def _parse_translations(raw: str) -> list:
+    """LLM応答から訳文リストを取り出す。
+    {"translations":[...]} / 素の配列 [...] / 末尾欠けの補修 に対応。"""
+    s = re.sub(r"<think>[\s\S]*?</think>", "", raw or "", flags=re.IGNORECASE).strip()
+    s = re.sub(r"```json\s*|```", "", s).strip()
+    m = re.search(r"\{[\s\S]*\}", s) or re.search(r"\[[\s\S]*\]", s)
+    cand = (m.group(0) if m else s).strip()
+    if not cand:
+        raise ValueError("空のレスポンス（訳文なし）")
+
+    data = None
     try:
-        json.loads(cleaned)
-        return cleaned
+        data = json.loads(cand)
     except json.JSONDecodeError:
-        pass
+        for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
+            try:
+                data = json.loads(cand + suffix)
+                break
+            except json.JSONDecodeError:
+                continue
+    if data is None:
+        raise ValueError(f"JSON解析不可（{len(cand)}字）")
 
-    # Most common truncation is a missing closing quote/bracket/brace
-    for suffix in (']}', '"]}', '"}]}'):
-        try:
-            candidate = cleaned + suffix
-            json.loads(candidate)
-            logger.debug(f"Translation JSON repaired by appending '{suffix}'")
-            return candidate
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError(f"JSON unparseable after repair attempt. First 200 chars: {cleaned[:200]}")
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("translations") or data.get("translation") or []
+    else:
+        items = []
+    return [("" if x is None else str(x)).strip() for x in items]
 
 
 def _simple_chunk_transcript(transcript: list) -> list:
@@ -323,7 +333,7 @@ def _translate_window(
 ) -> list:
     """1ウィンドウ分の英文を翻訳し translations(list[str]) を返す。失敗時は例外を送出。
     event_stream から executor 経由でウィンドウごとに呼び出す（進捗送信のため）。"""
-    num_predict = min(4096, sum(len(p["en"].split()) for p in window) * 4 + 256)
+    num_predict = min(4096, sum(len(p["en"].split()) for p in window) * 6 + 512)
     user_content = json.dumps([p["en"] for p in window], ensure_ascii=False)
     messages = [
         {"role": "system", "content": TRANSLATE_ONLY_SYSTEM},
@@ -334,8 +344,61 @@ def _translate_window(
         provider=provider, ollama_url=ollama_url, model=model,
         endpoint=endpoint, api_key=api_key,
     )
-    parsed = json.loads(_repair_translations_json(raw))
-    return parsed.get("translations", [])
+    try:
+        return _parse_translations(raw)
+    except Exception as e:
+        logger.warning(f"翻訳JSON解析失敗 ({e}) | raw {len(raw or '')}字: {repr((raw or '')[:160])}")
+        raise
+
+
+def _translate_one(en: str, provider: str, ollama_url: str, model: str,
+                   endpoint: str, api_key: str) -> str:
+    """1文だけを翻訳（JSONを使わず、訳文そのものを返す堅牢フォールバック）。"""
+    messages = [
+        {"role": "system", "content":
+            "You are an English-to-Japanese translator. Output ONLY the natural Japanese "
+            "translation of the user's sentence — no quotes, no notes, no English, no JSON."},
+        {"role": "user", "content": en},
+    ]
+    num_predict = min(1024, len(en.split()) * 6 + 128)
+    raw = _translate_chat(
+        messages, num_predict,
+        provider=provider, ollama_url=ollama_url, model=model,
+        endpoint=endpoint, api_key=api_key,
+    )
+    s = re.sub(r"<think>[\s\S]*?</think>", "", raw or "", flags=re.IGNORECASE).strip()
+    s = re.sub(r"```[a-z]*\s*|```", "", s).strip()
+    return s.strip().strip('「」"\'' ).strip()
+
+
+def _translate_window_safe(window: list, provider: str, ollama_url: str, model: str,
+                           endpoint: str, api_key: str) -> list:
+    """バッチ翻訳。解析失敗・件数不足なら二分割で再試行し、最終的に1文ずつ訳す。
+    タイムアウト/接続エラーは上位（リトライ）へ送出する。"""
+    n = len(window)
+    if n == 0:
+        return []
+    if n == 1:
+        try:
+            return [_translate_one(window[0]["en"], provider, ollama_url, model, endpoint, api_key)]
+        except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError):
+            raise
+        except Exception as e:
+            logger.warning(f"1文翻訳に失敗（英語のまま）: {e}")
+            return [""]
+    try:
+        res = _translate_window(window, provider, ollama_url, model, endpoint, api_key)
+    except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError):
+        raise
+    except Exception:
+        res = None
+    if res is not None and len(res) >= n:
+        return res[:n]
+    # 失敗 or 件数不足 → 二分割
+    mid = n // 2
+    left  = _translate_window_safe(window[:mid], provider, ollama_url, model, endpoint, api_key)
+    right = _translate_window_safe(window[mid:], provider, ollama_url, model, endpoint, api_key)
+    return left + right
 
 
 # ── 以下の LLM アノテーション関数は現在未使用（_rule_annotate_para に置き換え済み）──
@@ -992,7 +1055,7 @@ async def retranslate(video_id: str, request: RetranslateRequest):
             for attempt in range(3):
                 try:
                     translations = await loop.run_in_executor(
-                        None, _translate_window, window,
+                        None, _translate_window_safe, window,
                         provider, request.ollama_url, model,
                         request.translate_endpoint, request.translate_api_key,
                     )
