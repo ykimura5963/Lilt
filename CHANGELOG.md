@@ -20,6 +20,23 @@
 
 ---
 
+## [1.3.0] - 2026-06-07
+
+### Added（追加）
+- **シャドーイング Tier 1 / Step 2：練習ループ（聴く → 間 → 録音 → 比較）**。
+  - 各チャンクの **🎧 練習**ボタンから、`await` ベースの状態機械で **聴く（モデル再生 ×N）→ 間（ポーズ）→ 自動録音 → 比較（自分→モデル）** を **ループ回数ぶん自動**で実行。
+  - 画面下部に**練習ステータスバー**（現在のチャンク／フェーズ／ループ数）と **⏸ 一時停止・再開 / ⏭ 次チャンク / ⏹ 終了** を表示。
+  - **連続練習（▶▶）**トグル：完了チャンクから自動で次チャンクへ進む。
+  - 比較後の **自己評価（★1–3）** を `lilt.shadow.<contentBase>` に保存し、チャンクヘッダに**練習回数／評価バッジ**を表示（Tier 3 SRS の種）。
+  - コントロールバーに **ループ回数（×1/×2/×3/∞）・聴く回数・ポーズ長** のセレクタを追加（`localStorage` に永続化）。
+  - 練習中はチャンクリピートを一時無効化し、終了時に元へ復帰。
+
+### Notes（補足）
+- 駆動は既存の再生・区間シーク（`jumpTo`）を再利用。録音はチャンク長で自動停止（実時間）。
+- 後続：Step 3 波形オーバーレイ ／ Step 4 メトロノーム ／ Step 5 永続化（録音のFSA保存）。漸進スピードは将来追加予定。
+
+---
+
 ## [1.2.0] - 2026-06-07
 
 ### Added（追加）
@@ -71,7 +88,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ykimura5963/Lilt/releases/tag/v1.0.0
