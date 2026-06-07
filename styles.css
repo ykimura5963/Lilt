@@ -137,6 +137,30 @@ header{
 .pcard-repeat{font-size:10px;padding:1px 6px;border-radius:4px;cursor:pointer;border:.5px solid var(--bd2);background:transparent;color:var(--muted);font-family:var(--mono)}
 .pcard-repeat:hover,.pcard-repeat.on{color:var(--accent);border-color:rgba(245,200,66,.35)}
 
+/* ── シャドーイング（録音 + A/B） ── */
+.sh-rec{
+  flex-shrink:0;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;
+  border:.5px solid var(--bd2);background:var(--surf2);color:var(--muted);font-family:var(--mono);line-height:1.4;
+}
+.sh-rec:hover{color:var(--danger);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
+.sh-rec.recording{color:#fff;border-color:var(--danger);background:rgba(255,107,107,.85);animation:sh-pulse 1s ease-in-out infinite}
+@keyframes sh-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,.5)}50%{box-shadow:0 0 0 4px rgba(255,107,107,0)}}
+.sh-controls{display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
+.sh-btn{
+  font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;line-height:1.4;
+  border:.5px solid var(--bd2);background:transparent;color:var(--muted);font-family:var(--mono);
+}
+.sh-btn:hover{color:var(--a2);border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.08)}
+.sh-ind{font-family:var(--mono);font-size:10px;color:var(--danger);letter-spacing:.05em}
+.sh-vu{display:inline-block;width:48px;height:6px;border-radius:3px;background:var(--bd);overflow:hidden}
+.sh-vu i{display:block;height:100%;width:0%;background:var(--danger);transition:width .06s linear}
+#sh-countin{
+  position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;
+  pointer-events:none;font-family:var(--mono);font-size:120px;font-weight:700;
+  color:var(--accent);text-shadow:0 4px 30px rgba(0,0,0,.6);
+}
+#sh-countin.show{display:flex}
+
 .sentence{display:flex;flex-wrap:wrap;row-gap:12px;align-items:flex-end}
 .w{position:relative;display:inline-flex;flex-direction:column;align-items:center;margin-right:4px;vertical-align:bottom}
 .w.lit::before{
