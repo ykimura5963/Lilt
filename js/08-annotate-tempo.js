@@ -118,8 +118,15 @@ function normalizeRunpodUrl(url){
   return u + '/openai/v1/chat/completions';
 }
 
-/* ── 1段落アノテーション (Ollama / RunPod / OpenAI 切替対応) ── */
-async function annotateOneParagraph(apiKey, para, idx, speed, totalCount){
+/* ── OpenAI互換プロバイダ(RunPod/OpenRouter/OpenAI)のURLを解決 ── */
+function resolveOpenAiCompatUrl(prov){
+  if(prov.provider === 'runpod')     return normalizeRunpodUrl(prov.endpoint);
+  if(prov.provider === 'openrouter') return (prov.endpoint||'').trim() || 'https://openrouter.ai/api/v1/chat/completions';
+  return (prov.endpoint||'').trim() || 'https://api.openai.com/v1/chat/completions';
+}
+
+/* ── 1段落アノテーション (Ollama / RunPod / OpenRouter / OpenAI 切替対応) ── */
+async function annotateOneParagraph(prov, para, idx, speed, totalCount){
   const estDurPerWord = {slow:0.55, normal:0.42, fast:0.32, veryfast:0.25}[speed] || 0.35;
   const wordList = para.en.replace(/[,\.!?;:—–]/g,'').split(/\s+/).filter(Boolean);
   const estStart = para.start || 0;
@@ -158,9 +165,9 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
 
   let rawText2 = '';
   try{
-    if(genBackend === 'ollama'){
+    if(prov.provider === 'ollama'){
       const ollamaUrl = (genOllamaUrl||'http://localhost:11434').replace(/\/$/,'');
-      const model     = genModel || 'qwen3.5:2b';
+      const model     = prov.model || 'qwen3.5:4b';
       const resp = await fetch(ollamaUrl+'/api/chat',{
         method:'POST',
         signal: controller.signal,
@@ -179,36 +186,25 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
       if(!resp.ok) throw new Error('HTTP '+resp.status+': '+(await resp.text().catch(()=>'')).slice(0,80));
       const data = await resp.json();
       rawText2 = data.message?.content || data.response || '';
-    } else if(genBackend === 'runpod'){
-      const url   = normalizeRunpodUrl(runpodUrl);
-      const model = runpodModel || 'qwen/qwen3.5-9b';
-      const resp  = await fetch(url, {
-        method:'POST',
-        signal: controller.signal,
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+runpodApiKey},
-        body: JSON.stringify({
-          model, max_tokens:numPredict, temperature:0,
-          chat_template_kwargs:{enable_thinking:false},
-          messages:[
-            {role:'system', content:'You are a pronunciation annotator. Output valid JSON only.'},
-            {role:'user',   content: prompt}
-          ]
-        })
-      });
-      if(!resp.ok){
-        const err = await resp.json().catch(()=>({}));
-        throw new Error(err.error?.message||'HTTP '+resp.status);
-      }
-      rawText2 = (await resp.json()).choices?.[0]?.message?.content||'';
     } else {
-      const model = genModel || 'gpt-4o-mini';
-      const resp = await fetch('https://api.openai.com/v1/chat/completions',{
+      /* OpenAI互換 (RunPod / OpenRouter / OpenAI) — バックエンドの _translate_chat と揃える */
+      const url   = resolveOpenAiCompatUrl(prov);
+      const model = prov.model || (prov.provider === 'runpod' ? 'qwen/qwen3.5-9b' : 'gpt-4o-mini');
+      const extra = prov.provider === 'runpod'     ? {chat_template_kwargs:{enable_thinking:false}}
+                  : prov.provider === 'openrouter' ? {reasoning:{enabled:false}}
+                  : null;
+      const headers = {'Content-Type':'application/json','Authorization':'Bearer '+prov.apiKey};
+      if(url.includes('openrouter.ai')){
+        headers['HTTP-Referer'] = 'http://localhost:8080';
+        headers['X-Title']      = 'Lilt';
+      }
+      const resp = await fetch(url, {
         method:'POST',
         signal: controller.signal,
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
+        headers,
         body: JSON.stringify({
           model, max_tokens:numPredict, temperature:0,
-          response_format:{type:'json_object'},
+          ...(extra || {}),
           messages:[
             {role:'system', content:'You are a pronunciation annotator. Output valid JSON only.'},
             {role:'user',   content: prompt}

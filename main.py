@@ -19,6 +19,8 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+LILT_VERSION = "1.0.0"
+
 app = FastAPI(title="Lilt API")
 
 # CORS: 既定は全許可（localhost開発用）。本番では ALLOWED_ORIGINS="http://a,http://b" で制限可能
@@ -198,9 +200,19 @@ def _extract_json(raw: str) -> str:
 
 # ── Blocking helpers (run via executor) ──────────────────────────────────────
 
-def _download_video(url: str, opts: dict):
+def _download_video(url: str, opts: dict) -> Optional[str]:
+    """動画をDLし、取得できればタイトルを返す（info.txt生成用）。"""
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+        info = ydl.extract_info(url, download=True)
+        return info.get("title") if info else None
+
+
+def _get_video_title(url: str) -> Optional[str]:
+    """メタデータのみ取得（DL済みスキップ時のタイトル取得用）。"""
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info.get("title") if info else None
 
 
 def _snippets_to_list(fetched) -> list:
@@ -241,60 +253,35 @@ def _get_transcript(video_id: str) -> list:
         raise RuntimeError(f"字幕の取得に失敗しました: {e}")
 
 
-CHUNK_TRANSLATE_SYSTEM = """You are an English-Japanese translation expert.
-Given a small list of YouTube subtitle entries (JSON array), group them into sentence-level paragraphs with Japanese translations.
+TRANSLATE_ONLY_SYSTEM = """You are an English-to-Japanese translation expert.
+You will receive a JSON array of English sentences that were already segmented from a video transcript verbatim — do NOT rewrite, merge, split, reorder, or correct them in any way.
 
-Rules:
-- Group into natural sentences (8-20 words each)
-- Target 2-4 subtitle entries per paragraph to keep JSON output compact
-- "start" = first entry's start time, "end" = last entry's start + duration
-- Japanese translation must be natural and fluent
-- Output ONLY valid complete JSON — no truncation, no explanation
+For each item, produce a natural and fluent Japanese translation.
 
-Output format (complete JSON required):
-{"paragraphs":[{"en":"English text","ja":"日本語訳","start":0.5,"end":3.2}]}"""
+Output ONLY valid complete JSON in this exact format (same length and order as the input array, no truncation, no explanation):
+{"translations":["日本語訳1","日本語訳2"]}"""
 
 
-def _repair_json(raw: str) -> str:
-    """Try to salvage a truncated JSON string by extracting complete paragraph objects."""
+def _repair_translations_json(raw: str) -> str:
+    """Try to salvage a truncated {"translations":[...]} JSON string."""
     cleaned = _extract_json(raw)
-
-    # Step 1: Try to parse as-is first
     try:
         json.loads(cleaned)
         return cleaned
     except json.JSONDecodeError:
         pass
 
-    # Step 2: Try closing unclosed JSON — most common truncation is missing ]}
+    # Most common truncation is a missing closing quote/bracket/brace
     for suffix in (']}', '"]}', '"}]}'):
         try:
             candidate = cleaned + suffix
             json.loads(candidate)
-            logger.debug(f"JSON repaired by appending '{suffix}'")
+            logger.debug(f"Translation JSON repaired by appending '{suffix}'")
             return candidate
         except json.JSONDecodeError:
             pass
 
-    # Step 3: Extract individual paragraph objects that are complete via regex
-    pattern = re.compile(
-        r'\{[^{}]*"en"\s*:\s*"[^"]*"[^{}]*"ja"\s*:\s*"[^"]*"[^{}]*"start"\s*:[^,}]+[^{}]*"end"\s*:[^,}]+\}',
-        re.DOTALL,
-    )
-    items = pattern.findall(cleaned)
-    valid = []
-    for item in items:
-        try:
-            json.loads(item)
-            valid.append(item)
-        except json.JSONDecodeError:
-            pass
-
-    if valid:
-        logger.warning(f"JSON truncated; recovered {len(valid)} paragraph(s) via regex")
-        return '{"paragraphs":[' + ",".join(valid) + "]}"
-
-    raise ValueError(f"JSON completely unparseable after repair attempt. First 200 chars: {cleaned[:200]}")
+    raise ValueError(f"JSON unparseable after repair attempt. First 200 chars: {cleaned[:200]}")
 
 
 def _simple_chunk_transcript(transcript: list) -> list:
@@ -321,58 +308,25 @@ def _simple_chunk_transcript(transcript: list) -> list:
     return paras
 
 
-def _llm_chunk_and_translate(
-    transcript: list, ollama_url: str, model: str,
-    provider: str = "ollama", endpoint: str = "", api_key: str = "",
+def _translate_window(
+    window: list, provider: str, ollama_url: str, model: str,
+    endpoint: str, api_key: str,
 ) -> list:
-    # 10 entries per window: smaller windows → fewer output paragraphs → less truncation risk
-    WINDOW = 10
-    windows = [transcript[i:i+WINDOW] for i in range(0, len(transcript), WINDOW)]
-    all_paras: list = []
-    failed_windows: list = []
-
-    for wi, window in enumerate(windows):
-        # Worst case: 1 paragraph per entry → window × ~120 tokens/para + 512 overhead
-        # num_ctx=4096 ensures input(~600tok)+output fit within model's context window
-        num_predict = min(4096, len(window) * 200 + 512)
-        user_content = json.dumps(window, ensure_ascii=False)
-        messages = [
-            {"role": "system", "content": CHUNK_TRANSLATE_SYSTEM},
-            {"role": "user",   "content": f"Segment and translate these {len(window)} entries:\n{user_content}"},
-        ]
-        try:
-            raw = _translate_chat(
-                messages, num_predict,
-                provider=provider, ollama_url=ollama_url, model=model,
-                endpoint=endpoint, api_key=api_key,
-            )
-            repaired = _repair_json(raw)
-            parsed = json.loads(repaired)
-            paras = parsed.get("paragraphs", [])
-            if paras:
-                all_paras.extend(paras)
-                logger.info(f"Window {wi+1}/{len(windows)}: {len(paras)} paragraphs OK")
-            else:
-                logger.warning(f"Window {wi+1}: LLM returned empty paragraphs, using fallback")
-                failed_windows.append(window)
-        except Exception as e:
-            logger.warning(f"Window {wi+1} LLM failed ({e}), will use fallback")
-            failed_windows.append(window)
-
-    # Fallback: simple chunking for any failed windows
-    if failed_windows:
-        flat = [entry for w in failed_windows for entry in w]
-        fallback_paras = _simple_chunk_transcript(flat)
-        logger.warning(f"Fallback produced {len(fallback_paras)} paragraphs for {len(failed_windows)} failed window(s)")
-        all_paras.extend(fallback_paras)
-
-    # Sort by start time (windows may have added out-of-order due to fallback)
-    all_paras.sort(key=lambda p: float(p.get("start", 0)))
-
-    if not all_paras:
-        raise RuntimeError("すべての窓でチャンク処理に失敗しました。字幕データを確認してください。")
-
-    return all_paras
+    """1ウィンドウ分の英文を翻訳し translations(list[str]) を返す。失敗時は例外を送出。
+    event_stream から executor 経由でウィンドウごとに呼び出す（進捗送信のため）。"""
+    num_predict = min(4096, sum(len(p["en"].split()) for p in window) * 4 + 256)
+    user_content = json.dumps([p["en"] for p in window], ensure_ascii=False)
+    messages = [
+        {"role": "system", "content": TRANSLATE_ONLY_SYSTEM},
+        {"role": "user",   "content": f"Translate these {len(window)} English sentences into Japanese:\n{user_content}"},
+    ]
+    raw = _translate_chat(
+        messages, num_predict,
+        provider=provider, ollama_url=ollama_url, model=model,
+        endpoint=endpoint, api_key=api_key,
+    )
+    parsed = json.loads(_repair_translations_json(raw))
+    return parsed.get("translations", [])
 
 
 # ── 以下の LLM アノテーション関数は現在未使用（_rule_annotate_para に置き換え済み）──
@@ -771,15 +725,37 @@ async def process_youtube(request: ProcessRequest):
             "noplaylist":          True,
             "no_warnings":         False,
         }
-        yield send({"type": "progress", "stage": "download", "pct": 5,
-                    "msg": "動画のダウンロードと字幕取得を並列実行中..."})
-
-        dl_future  = loop.run_in_executor(None, _download_video, request.url, ydl_opts)
-        sub_future = loop.run_in_executor(None, _get_transcript, video_id)
-        # return_exceptions=True: 片方が失敗してももう一方をキャンセルしない
-        dl_result, sub_result = await asyncio.gather(
-            dl_future, sub_future, return_exceptions=True
+        already_downloaded = any(
+            os.path.isfile(os.path.join(output_dir, fname))
+            and fname.startswith("video.")
+            and os.path.splitext(fname)[1].lower() in VIDEO_EXTS
+            for fname in os.listdir(output_dir)
         )
+
+        video_title: Optional[str] = None
+
+        if already_downloaded:
+            yield send({"type": "progress", "stage": "download", "pct": 20,
+                        "msg": "動画は既にダウンロード済みのためスキップし、字幕取得から再開します..."})
+            dl_result = None
+            title_future = loop.run_in_executor(None, _get_video_title, request.url)
+            sub_future   = loop.run_in_executor(None, _get_transcript, video_id)
+            title_result, sub_result = await asyncio.gather(
+                title_future, sub_future, return_exceptions=True
+            )
+            if not isinstance(title_result, Exception):
+                video_title = title_result
+        else:
+            yield send({"type": "progress", "stage": "download", "pct": 5,
+                        "msg": "動画のダウンロードと字幕取得を並列実行中..."})
+            dl_future  = loop.run_in_executor(None, _download_video, request.url, ydl_opts)
+            sub_future = loop.run_in_executor(None, _get_transcript, video_id)
+            # return_exceptions=True: 片方が失敗してももう一方をキャンセルしない
+            dl_result, sub_result = await asyncio.gather(
+                dl_future, sub_future, return_exceptions=True
+            )
+            if isinstance(dl_result, str):
+                video_title = dl_result
 
         # DL 結果の処理（失敗は warning のみ — 字幕処理は続行）
         download_ok = False
@@ -820,53 +796,115 @@ async def process_youtube(request: ProcessRequest):
         # アノテーションはルールベースに置き換え済みのため翻訳モデルのみ使用
         translate_model = request.translate_model or request.model
 
-        # ── Stage 3a: Chunk & translate（翻訳プロバイダ振り分け） ──────────
+        # 翻訳プロバイダ判定（英文段落化→翻訳→注釈は以降のステージで実施）
         _provider  = (request.translate_provider or "ollama").lower()
         _llm_label = translate_model if _provider == "ollama" else f"{_provider}:{translate_model}"
-        yield send({"type": "progress", "stage": "llm", "pct": 25,
-                    "msg": f"日本語訳を生成中（{_llm_label}）..."})
+
+        # 動画と同じフォルダにメタ情報を txt で保存
         try:
-            paragraphs_raw = await loop.run_in_executor(
-                None, _llm_chunk_and_translate,
-                transcript, request.ollama_url, translate_model,
-                _provider, request.translate_endpoint, request.translate_api_key,
+            info_text = (
+                f"Movie title: {video_title or video_id}\n"
+                f"URL: {request.url}\n"
+                f"Use LLM model: {_llm_label}\n"
+                f"Use Lilt Version: {LILT_VERSION}\n"
             )
+            with open(os.path.join(output_dir, "info.txt"), "w", encoding="utf-8") as f:
+                f.write(info_text)
         except Exception as e:
+            logger.warning(f"info.txt の保存に失敗: {e}")
+
+        # ── Stage 3a: 英文の段落化（ルールベース・LLM不要／原文をそのまま保持） ──
+        yield send({"type": "progress", "stage": "llm", "pct": 25,
+                    "msg": "字幕を段落に分割中..."})
+        paragraphs_raw = _simple_chunk_transcript(transcript)
+        if not paragraphs_raw:
             yield send({"type": "error", "stage": "llm",
-                        "msg": f"チャンク・翻訳処理に失敗: {str(e)[:300]}"})
+                        "msg": "字幕から段落を生成できませんでした。"})
             return
 
-        # 翻訳完了時点で data.md を先に保存（注釈が遅くても対訳は手に入る）
+        def _write_data_md(paras_src: list) -> None:
+            """現時点の段落で data.md を保存（部分結果でも必ず原文を残す）。"""
+            try:
+                with open(os.path.join(output_dir, "data.md"), "w", encoding="utf-8") as f:
+                    f.write(build_data_md(video_id, paras_src))
+            except Exception as e:
+                logger.warning(f"data.md 保存に失敗: {e}")
+
+        # 翻訳前に英語のみで先行保存（翻訳が失敗・遅延しても原文は確実に手に入る）
+        _write_data_md(paragraphs_raw)
+
+        # ── Stage 3b: 日本語訳をウィンドウ単位で生成（進捗送信＋タイムアウト時フェイルファスト） ──
+        if _provider == "runpod":
+            translate_dest = _normalize_runpod_url(request.translate_endpoint)
+        elif _provider == "openrouter":
+            translate_dest = request.translate_endpoint.strip() or OPENROUTER_DEFAULT_URL
+        elif _provider == "openai":
+            translate_dest = request.translate_endpoint.strip() or OPENAI_DEFAULT_URL
+        else:
+            translate_dest = request.ollama_url
+        logger.info(f"Translation provider: {_provider} | model={translate_model} | endpoint={translate_dest}")
+
+        WINDOW = 12
+        windows = [paragraphs_raw[i:i+WINDOW] for i in range(0, len(paragraphs_raw), WINDOW)]
+        for wi, window in enumerate(windows):
+            pct = 25 + int((wi / max(len(windows), 1)) * 58)   # 25 → 83%
+            yield send({"type": "progress", "stage": "llm", "pct": pct,
+                        "msg": f"日本語訳を生成中（{_llm_label}）... {wi+1}/{len(windows)}"})
+            try:
+                translations = await loop.run_in_executor(
+                    None, _translate_window, window,
+                    _provider, request.ollama_url, translate_model,
+                    request.translate_endpoint, request.translate_api_key,
+                )
+                for p, ja in zip(window, translations):
+                    p["ja"] = ja
+                logger.info(f"Window {wi+1}/{len(windows)}: {len(translations)} 件翻訳 OK")
+                _write_data_md(paragraphs_raw)   # ウィンドウ毎に逐次保存
+            except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError) as e:
+                # 接続不可／無応答 → 以降も同様に失敗する公算が高い。無駄な待機を避け英語のみで打ち切り
+                logger.warning(f"Window {wi+1}/{len(windows)} 接続失敗 ({type(e).__name__}): 翻訳を中止し英語のみで保存")
+                yield send({"type": "warning", "stage": "llm", "pct": 83,
+                            "msg": f"翻訳サーバ（{_provider}）が応答しません（{type(e).__name__}）。"
+                                   f"英語のみで保存します。RunPodの場合はワーカー起動（コールドスタート）をご確認ください。"})
+                break
+            except Exception as e:
+                # JSONパース失敗など個別ウィンドウの問題 → そのウィンドウは英語のまま続行
+                logger.warning(f"Window {wi+1}/{len(windows)} 翻訳失敗 ({e}): 英語のまま続行")
+                yield send({"type": "warning", "stage": "llm", "pct": pct,
+                            "msg": f"ウィンドウ{wi+1}の翻訳に失敗（英語のまま続行）"})
+
+        _write_data_md(paragraphs_raw)
+        yield send({"type": "progress", "stage": "llm", "pct": 85,
+                    "msg": f"対訳mdを保存（{len(paragraphs_raw)}段落）。発音アノテーションへ..."})
+
+        # ── Stage 3c: ルールベースアノテーション + Stage 4: 保存 ────────────
+        # ここで例外が出ても対訳md（行内で保存済み）は残るよう try/except で保護し、
+        # 失敗時はSSEエラーを返す（ストリームの無言中断を防ぐ）。
         try:
+            # GA ルール（機能語/強勢/弱化/消音/イントネーション）を Python で適用。
+            yield send({"type": "progress", "stage": "llm", "pct": 88,
+                        "msg": f"発音アノテーションを生成中（ルールベース・{len(paragraphs_raw)}段落）..."})
+            paras = [_rule_annotate_para(p, i) for i, p in enumerate(paragraphs_raw)]
+
+            yield send({"type": "progress", "stage": "save", "pct": 92,
+                        "msg": "ファイルを保存中..."})
+            # ws=テンポ配分（オフライン互換）+ wsUniform=均等割り を焼き込む
+            bake_tempo_timings(paras)
+            final_json = {
+                "version":     "2",
+                "contentBase": video_id,
+                "generatedAt": datetime.datetime.utcnow().isoformat() + "Z",
+                "paras":       paras,
+            }
+            with open(os.path.join(output_dir, "data.json"), "w", encoding="utf-8") as f:
+                json.dump(final_json, f, ensure_ascii=False, indent=2)
             with open(os.path.join(output_dir, "data.md"), "w", encoding="utf-8") as f:
-                f.write(build_data_md(video_id, paragraphs_raw))
-            yield send({"type": "progress", "stage": "llm", "pct": 85,
-                        "msg": f"対訳mdを保存（{len(paragraphs_raw)}段落）。発音アノテーションへ..."})
-        except Exception:
-            pass
-
-        # ── Stage 3b: ルールベースアノテーション（即時完了・LLM不要） ────────
-        # GA ルール（機能語/強勢/弱化/消音/イントネーション）を Python で適用。
-        # LLM ループ（N段落 × 5〜15秒）を完全に置き換える。
-        yield send({"type": "progress", "stage": "llm", "pct": 88,
-                    "msg": f"発音アノテーションを生成中（ルールベース・{len(paragraphs_raw)}段落）..."})
-        paras = [_rule_annotate_para(p, i) for i, p in enumerate(paragraphs_raw)]
-
-        # ── Stage 4: Save files ───────────────────────────────────────────
-        yield send({"type": "progress", "stage": "save", "pct": 92,
-                    "msg": "ファイルを保存中..."})
-        # ws=テンポ配分（オフライン互換）+ wsUniform=均等割り を焼き込む
-        bake_tempo_timings(paras)
-        final_json = {
-            "version":     "2",
-            "contentBase": video_id,
-            "generatedAt": datetime.datetime.utcnow().isoformat() + "Z",
-            "paras":       paras,
-        }
-        with open(os.path.join(output_dir, "data.json"), "w", encoding="utf-8") as f:
-            json.dump(final_json, f, ensure_ascii=False, indent=2)
-        with open(os.path.join(output_dir, "data.md"), "w", encoding="utf-8") as f:
-            f.write(build_data_md(video_id, paras))
+                f.write(build_data_md(video_id, paras))
+        except Exception as e:
+            logger.exception("アノテーション/保存でエラー")
+            yield send({"type": "error", "stage": "save",
+                        "msg": f"アノテーション/保存に失敗しました（対訳mdは保存済み）: {str(e)[:200]}"})
+            return
 
         yield send({
             "type":      "done",
