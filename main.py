@@ -19,7 +19,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.3.0"
+LILT_VERSION = "1.4.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -64,6 +64,15 @@ class ProcessRequest(BaseModel):
     translate_provider: str = "ollama"   # ollama | runpod | openrouter | openai
     translate_endpoint: str = ""         # OpenAI互換URL（RunPodのrunsync URLも受理／空=既定）
     translate_api_key: str = ""          # RunPod/OpenRouter/OpenAI のAPIキー
+
+
+class RetranslateRequest(BaseModel):
+    """既存プロジェクトの日本語訳のみを再生成する（DL・字幕取得・注釈は行わない）。"""
+    translate_model: str = ""
+    ollama_url: str = OLLAMA_URL
+    translate_provider: str = "ollama"   # ollama | runpod | openrouter | openai
+    translate_endpoint: str = ""
+    translate_api_key: str = ""
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -914,6 +923,101 @@ async def process_youtube(request: ProcessRequest):
             "video_url": f"/files/{video_id}/video.mp4" if download_ok else None,
             "msg":       f"完了！ {len(paras)}段落を生成しました",
         })
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/retranslate/{video_id}")
+async def retranslate(video_id: str, request: RetranslateRequest):
+    """既存 data.json の英文を再翻訳して ja を補完し、data.json / data.md を更新する。
+    動画DL・字幕取得・発音アノテーションはやり直さない（既存の語タイミング等は保持）。"""
+    if not re.match(r"^[A-Za-z0-9_\-]+$", video_id):
+        raise HTTPException(status_code=400, detail="無効なvideo_idです")
+    proj_dir  = os.path.join(PROJECTS_DIR, video_id)
+    json_path = os.path.join(proj_dir, "data.json")
+    if not os.path.isfile(json_path):
+        raise HTTPException(status_code=404, detail="data.json が見つかりません")
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        def send(obj: dict) -> str:
+            return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+        loop = asyncio.get_event_loop()
+
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except Exception as e:
+            yield send({"type": "error", "msg": f"data.json の読み込みに失敗: {e}"}); return
+        paras = doc.get("paras", [])
+        if not paras:
+            yield send({"type": "error", "msg": "data.json に段落がありません"}); return
+
+        provider = (request.translate_provider or "ollama").lower()
+        model    = request.translate_model or OLLAMA_MODEL
+        label    = model if provider == "ollama" else f"{provider}:{model}"
+        if provider == "runpod":
+            dest = _normalize_runpod_url(request.translate_endpoint)
+        elif provider == "openrouter":
+            dest = request.translate_endpoint.strip() or OPENROUTER_DEFAULT_URL
+        elif provider == "openai":
+            dest = request.translate_endpoint.strip() or OPENAI_DEFAULT_URL
+        else:
+            dest = request.ollama_url
+        logger.info(f"Retranslate provider: {provider} | model={model} | endpoint={dest} | video={video_id}")
+
+        def _write_back():
+            doc["paras"] = paras
+            doc["generatedAt"] = datetime.datetime.utcnow().isoformat() + "Z"
+            try:
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(doc, f, ensure_ascii=False, indent=2)
+                with open(os.path.join(proj_dir, "data.md"), "w", encoding="utf-8") as f:
+                    f.write(build_data_md(video_id, paras))
+            except Exception as e:
+                logger.warning(f"retranslate の保存に失敗: {e}")
+
+        WINDOW  = 12
+        windows = [paras[i:i+WINDOW] for i in range(0, len(paras), WINDOW)]
+        filled  = 0
+        for wi, window in enumerate(windows):
+            pct = 2 + int((wi / max(len(windows), 1)) * 94)
+            yield send({"type": "progress", "pct": pct,
+                        "msg": f"日本語訳を生成中（{label}）... {wi+1}/{len(windows)}"})
+            ok, last_err = False, None
+            # RunPod のコールドスタートを乗り越えるため、タイムアウト/接続失敗は数回リトライ
+            for attempt in range(3):
+                try:
+                    translations = await loop.run_in_executor(
+                        None, _translate_window, window,
+                        provider, request.ollama_url, model,
+                        request.translate_endpoint, request.translate_api_key,
+                    )
+                    for p, ja in zip(window, translations):
+                        if ja: p["ja"] = ja
+                    filled += sum(1 for ja in translations if ja)
+                    ok = True
+                    break
+                except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError) as e:
+                    last_err = e
+                    yield send({"type": "progress", "pct": pct,
+                                "msg": f"ウィンドウ{wi+1}: 応答待ち・再試行 {attempt+1}/3（RunPodのワーカー起動中の可能性）..."})
+                    await asyncio.sleep(2)
+                except Exception as e:
+                    last_err = e
+                    break
+            if not ok:
+                logger.warning(f"Retranslate window {wi+1}/{len(windows)} 失敗: {last_err}")
+                yield send({"type": "warning", "pct": pct,
+                            "msg": f"ウィンドウ{wi+1}の翻訳に失敗（英語のまま）: {str(last_err)[:140]}"})
+            _write_back()   # ウィンドウ毎に逐次保存
+
+        yield send({"type": "done", "video_id": video_id,
+                    "ja_filled": filled, "para_count": len(paras),
+                    "msg": f"再翻訳完了：{filled}/{len(paras)} 段落に日本語訳を付与しました"})
 
     return StreamingResponse(
         event_stream(),

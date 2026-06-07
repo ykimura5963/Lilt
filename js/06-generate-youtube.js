@@ -54,6 +54,7 @@ async function loadYouTubeProjects(){
         <span class="yt-proj-name" title="${p.video_id}">${p.title||p.video_id}</span>
         <div style="display:flex;gap:4px;flex-shrink:0">
           ${p.has_data ? `<button class="yt-proj-load" onclick="loadYouTubeProject('${p.video_id}')">読込</button>` : '<span style="font-size:10px;color:var(--muted);padding:2px 4px">処理中</span>'}
+          ${p.has_data ? `<button class="yt-proj-load" onclick="retranslateProject('${p.video_id}')" title="日本語訳を再生成（DL・字幕取得なし）">🌐訳</button>` : ''}
           <button class="yt-proj-del" onclick="deleteYouTubeProject('${p.video_id}')" title="削除">🗑</button>
         </div>
       </div>`).join('');
@@ -112,6 +113,57 @@ async function loadYouTubeProject(videoId){
   }catch(err){
     showToast('読み込みエラー: '+err.message, true, 5000);
   }
+}
+
+/* ── 既存プロジェクトの日本語訳のみ再生成（DL・字幕取得なし／ja のみ更新） ── */
+async function retranslateProject(videoId){
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const prov  = resolveTranslateProvider();
+  if(prov.provider !== 'ollama' && !prov.apiKey){
+    showToast(`${prov.provider} のAPIキーを「設定」タブで入力してください`, true); return;
+  }
+  if(!confirm(`「${videoId}」の日本語訳を【${prov.provider}】で再生成します。\n英文・タイミングはそのままで、日本語訳(ja)のみ更新します。\n\nよろしいですか？`)) return;
+
+  let resp;
+  try{
+    resp = await fetch(`${bkUrl}/retranslate/${videoId}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        translate_provider: prov.provider,
+        translate_model:    prov.model,
+        translate_endpoint: prov.endpoint,
+        translate_api_key:  prov.apiKey,
+        ollama_url:         genOllamaUrl || 'http://localhost:11434',
+      })
+    });
+    if(!resp.ok){ const e = await resp.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+resp.status); }
+  }catch(err){ showToast('再翻訳の開始に失敗: '+err.message, true, 5000); return; }
+
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  try{
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')) continue;
+        let evt; try{ evt = JSON.parse(line.slice(6)); }catch(e){ continue; }
+        if(evt.type==='progress' || evt.type==='warning'){
+          showToast('🌐 '+(evt.msg||''), evt.type==='warning', 8000);
+        }else if(evt.type==='error'){
+          showToast('再翻訳エラー: '+evt.msg, true, 6000);
+        }else if(evt.type==='done'){
+          showToast('✓ '+(evt.msg||'再翻訳が完了しました'), false, 5000);
+          /* 現在表示中のプロジェクトなら再読込して訳を反映 */
+          if(typeof currentBase!=='undefined' && currentBase===videoId){ loadYouTubeProject(videoId); }
+        }
+      }
+    }
+  }catch(err){ showToast('再翻訳ストリームエラー: '+err.message, true, 5000); }
 }
 
 /* ── 翻訳プロバイダ設定を解決（provider/endpoint/api_key/model） ── */

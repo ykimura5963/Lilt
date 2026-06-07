@@ -20,6 +20,17 @@
 
 ---
 
+## [1.4.0] - 2026-06-07
+
+### Added（追加）
+- **日本語訳のみ再生成（再翻訳）機能**。保存済みプロジェクト一覧の **🌐訳** ボタンから、**動画DL・字幕取得・発音アノテーションをやり直さず**、既存 `data.json` の英文を選択中のプロバイダで翻訳して `ja` を補完し、`data.json` / `data.md` を更新（語タイミング等は保持）。バックエンド `POST /retranslate/{video_id}`（SSE進捗）。
+- 再翻訳では **RunPod のコールドスタート対策**として、タイムアウト/接続失敗時に**ウィンドウ単位で自動リトライ**（ワーカー起動待ち）。ウィンドウ毎に逐次保存。
+
+### Fixed（修正）
+- 全自動処理を **RunPod** で実行した際、翻訳がタイムアウトして **`data.md`/`data.json` の日本語訳が空**になっていた既存プロジェクトを、再ダウンロードなしで**後から日本語訳のみ補完**できるようにした。
+
+---
+
 ## [1.3.0] - 2026-06-07
 
 ### Added（追加）
@@ -88,7 +99,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0

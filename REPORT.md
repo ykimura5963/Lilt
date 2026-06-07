@@ -1,5 +1,5 @@
 # Lilt — プロジェクト分析レポート
-*2026-06-07 時点 / アプリバージョン `LILT_VERSION = 1.3.0`*
+*2026-06-07 時点 / アプリバージョン `LILT_VERSION = 1.4.0`*
 
 ## 全体構成
 - **バックエンド**（`main.py` / FastAPI）：YouTube URL → `yt-dlp`（480p）+ `youtube-transcript-api`（字幕）→ **英文は字幕をそのまま使用**（`_simple_chunk_transcript` でルールベース段落化）→ **LLMは日本語訳のみ**（`_translate_window`：Ollama / RunPod / OpenRouter / OpenAI を OpenAI互換で統一）→ **発音アノテーションはPythonのルールベース**（`_rule_annotate_para`、LLM不要・即時）→ `projects/{video_id}/{video.mp4, data.json, data.md, info.txt}` に保存（保存時にテンポ時刻を焼き込み）。SSEで進捗配信（翻訳はウィンドウ単位で逐次保存＋進捗送信、タイムアウト時はフェイルファストで英語のみ保存）。エンドポイント：`POST /process`、`GET /projects`、`DELETE /projects/{id}`、`GET /health`（ffmpeg/Ollama/モデル診断）、`/files/*`（動画シーク用Range対応）。CORSは `ALLOWED_ORIGINS` で制限可、起動時に ffmpeg をプリフライトチェック。動画DL済みなら再DLをスキップして字幕取得から再開。
@@ -46,6 +46,7 @@
 - ☆**バックエンド健全性バッジ**（`/health`：ffmpeg/Ollama/モデル）
 - 文字起こし入力：ペースト ／ ★**MD読込**（`data.md` をテキストエリアへ展開）※PDF読込は★廃止
 - **アノテーションのみ再生成（♺）** — 読込済みチャンクの発音記号だけを、再ダウンロード・再翻訳なしで作り直し（☆統合済みプロバイダ経由）
+- ☆**日本語訳のみ再生成（🌐訳）** — 保存済みプロジェクトの英文を、DL・字幕取得・注釈をやり直さず翻訳して `ja` を補完（`POST /retranslate/{id}`、SSE進捗、RunPodコールドスタート用のウィンドウ単位リトライ付き）。RunPodタイムアウトで英語のみになった既存データの復旧に使用
 - 動画名フォルダへの保存（`data.json` + `data.md` + 動画コピー）を File System Access API で実行、非対応時はダウンロードにフォールバック
 - ☆**メタ情報 `info.txt`** を動画と同フォルダに保存（Movie title / URL / Use LLM model / Use Lilt Version）
 - ★**タイミング焼き込み**：保存JSONに `ws`＝テンポ配分＋`wsUniform`＝均等割りを両方記録（schema `version:"2"`、オフライン互換）
