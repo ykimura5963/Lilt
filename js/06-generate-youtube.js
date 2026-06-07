@@ -54,6 +54,7 @@ async function loadYouTubeProjects(){
         <span class="yt-proj-name" title="${p.video_id}">${p.title||p.video_id}</span>
         <div style="display:flex;gap:4px;flex-shrink:0">
           ${p.has_data ? `<button class="yt-proj-load" onclick="loadYouTubeProject('${p.video_id}')">読込</button>` : '<span style="font-size:10px;color:var(--muted);padding:2px 4px">処理中</span>'}
+          ${p.has_data ? `<button class="yt-proj-load" onclick="retranslateProject('${p.video_id}')" title="日本語訳を再生成（DL・字幕取得なし）">🌐訳</button>` : ''}
           <button class="yt-proj-del" onclick="deleteYouTubeProject('${p.video_id}')" title="削除">🗑</button>
         </div>
       </div>`).join('');
@@ -114,9 +115,64 @@ async function loadYouTubeProject(videoId){
   }
 }
 
-/* ── 翻訳プロバイダ設定を解決（provider/endpoint/api_key/model） ── */
-function resolveTranslateProvider(){
-  const p = ytLlmBackend || 'ollama';
+/* ── 既存プロジェクトの日本語訳のみ再生成（DL・字幕取得なし／ja のみ更新） ── */
+async function retranslateProject(videoId){
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  /* 一覧上のプロバイダ選択を優先（無ければ共通設定 ytLlmBackend） */
+  const provName = document.getElementById('retrans-prov')?.value || ytLlmBackend || 'ollama';
+  const prov  = resolveProviderByName(provName);
+  if(prov.provider !== 'ollama' && !prov.apiKey){
+    showToast(`${prov.provider} のAPIキー/設定を「設定」タブで入力してください`, true); return;
+  }
+  if(prov.provider === 'ollama' && !prov.model){
+    showToast('Ollama のモデル名を「設定」タブで指定してください', true); return;
+  }
+  if(!confirm(`「${videoId}」の日本語訳を【${prov.provider}${prov.model?' / '+prov.model:''}】で再生成します。\n英文・タイミングはそのままで、日本語訳(ja)のみ更新します。\n\nよろしいですか？`)) return;
+
+  let resp;
+  try{
+    resp = await fetch(`${bkUrl}/retranslate/${videoId}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        translate_provider: prov.provider,
+        translate_model:    prov.model,
+        translate_endpoint: prov.endpoint,
+        translate_api_key:  prov.apiKey,
+        ollama_url:         genOllamaUrl || 'http://localhost:11434',
+      })
+    });
+    if(!resp.ok){ const e = await resp.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+resp.status); }
+  }catch(err){ showToast('再翻訳の開始に失敗: '+err.message, true, 5000); return; }
+
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  try{
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')) continue;
+        let evt; try{ evt = JSON.parse(line.slice(6)); }catch(e){ continue; }
+        if(evt.type==='progress' || evt.type==='warning'){
+          showToast('🌐 '+(evt.msg||''), evt.type==='warning', 8000);
+        }else if(evt.type==='error'){
+          showToast('再翻訳エラー: '+evt.msg, true, 6000);
+        }else if(evt.type==='done'){
+          showToast('✓ '+(evt.msg||'再翻訳が完了しました'), false, 5000);
+          /* 現在表示中のプロジェクトなら再読込して訳を反映 */
+          if(typeof currentBase!=='undefined' && currentBase===videoId){ loadYouTubeProject(videoId); }
+        }
+      }
+    }
+  }catch(err){ showToast('再翻訳ストリームエラー: '+err.message, true, 5000); }
+}
+
+/* ── 指定プロバイダの設定を解決（DOM入力 → 永続化変数の順でフォールバック） ── */
+function resolveProviderByName(p){
   if(p === 'runpod'){
     return { provider:'runpod',
       endpoint: (document.getElementById('yt-runpod-url')?.value?.trim()   || runpodUrl),
@@ -137,6 +193,11 @@ function resolveTranslateProvider(){
   /* ollama */
   return { provider:'ollama', endpoint:'', apiKey:'',
     model: (document.getElementById('yt-ollama-model')?.value?.trim() || ytOllamaModel) };
+}
+
+/* ── 翻訳プロバイダ設定を解決（共通設定 ytLlmBackend を使用） ── */
+function resolveTranslateProvider(){
+  return resolveProviderByName(ytLlmBackend || 'ollama');
 }
 
 /* ── フォールバックプロバイダ（Ollama固定）を返す ── */
@@ -287,6 +348,12 @@ function generateHTML(){
   <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">バックエンドURL・翻訳/注釈モデルは「設定」タブで変更できます</div>
   <hr class="gen-divider" style="margin-top:.75rem">
   <div class="gen-label" style="margin-bottom:6px">保存済みプロジェクト</div>
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+    <span style="font-size:10px;color:var(--muted);font-family:var(--mono);white-space:nowrap">🌐訳 のプロバイダ</span>
+    <select class="spd" id="retrans-prov" title="日本語訳の再生成に使うLLMプロバイダ（認証情報は「設定」タブの各項目を使用）">
+      ${['ollama','runpod','openrouter','openai'].map(v=>`<option value="${v}"${(ytLlmBackend||'ollama')===v?' selected':''}>${v}</option>`).join('')}
+    </select>
+  </div>
   <div id="yt-proj-list"><span style="font-size:11px;color:var(--muted);font-family:var(--mono)">読み込み中...</span></div>
   <button class="gen-btn danger" onclick="loadYouTubeProjects()" style="margin-top:6px;font-size:10px">
     ↻ 一覧を更新
