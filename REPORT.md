@@ -133,63 +133,93 @@
 
 ## 4. Tier 1 実装プラン（シャドーイングの中核ループ）
 
-### 目的とコンセプト
-チャンク単位で **聴く → 間（ポーズ）→ 録音 → 比較** の練習ループを回せるようにし、アプリを「入力（知覚）」から「出力（産出）」ツールへ拡張する。既存の **チャンクリピート（`04-player.js`）／テンポエンジン（`08-annotate-tempo.js`）／設定永続化（`02-state.js`）／FSA保存（`09-io-save-load.js`）** を再利用する。
+> 凡例：**☆改善** = 既存プランの強化 ／ **＋新規** = 今回の追加アイデア。
+> 実装時の想定バージョン：機能追加のため **MINOR**（例 `1.1.0 → 1.2.0`）。出荷時に `LILT_VERSION`・`REPORT.md`冒頭・`CHANGELOG.md` を同期更新する。
 
-### 全体設計
-- **新規モジュール `js/10-shadowing.js`** を追加し、`<script>` 読み込みを `10-init.js` の**直前**に挿入（init より前に関数定義が必要）。既存 `10-init.js` は `11-init.js` にリネーム。
-- 録音データは `Map<paraId, {blob, url, durations}>` でメモリ保持。任意で FSA フォルダ `rec/{paraId}.webm` に保存。
-- 設定（ループ回数・ポーズ長・メトロノーム・録音速度）は既存 `SETTINGS_KEY`（`localStorage`）に追加。
-- UI：段落ヘッダ（`renderTranscript` の `para-head`、`03-render-sync.js`）に **🎤 録音ボタン**を追加。コントロールバーに **シャドーイングモード（🎧）トグル**を追加。
+### 目的とコンセプト
+チャンク単位で **聴く → 間（ポーズ）→ 録音 → 比較 →（自己評価）** の練習ループを回せるようにし、アプリを「入力（知覚）」から「出力（産出）」ツールへ拡張する。既存の **チャンクリピート（`04-player.js`）／テンポエンジン（`08-annotate-tempo.js`）／設定永続化（`02-state.js`）／FSA保存（`09-io-save-load.js`）／同期tick（`vid` の `timeupdate`・YT 80msポーリング）** を最大限再利用し、新規依存・ビルド手順なしを維持する。
+
+### 全体設計（アーキテクチャ）
+- **新規モジュール `js/10-shadowing.js`** を追加。`<script>` 読み込みを `10-init.js` の**直前**に挿入（init で関数を呼ぶため定義が先に必要）。既存 `10-init.js` は **`11-init.js` にリネーム**（`index.html` の読み込み順も更新）。順序付きクラシックスクリプト方針（単一グローバル字句環境を共有）を踏襲し、トップレベル `let`／インラインハンドラ流儀に合わせる。
+- **状態**は `02-state.js` にトップレベル `let` を追加（`shadowMode` / `practiceState` / 録音ストア等）。グローバル共有なので他モジュールから直接参照できる。
+- **録音ストア**：`recStore = new Map()`（`paraId → { takes:[{blob,url,sec,at}], best:idx }`）でメモリ保持。☆改善：**1チャンク複数テイク（履歴）**を持ち、メモリ上限（例：合計 ~50MB / 各チャンク最新3テイク）を超えたら古いテイクの `URL.revokeObjectURL()` を呼び解放。
+- **設定**は既存 `SETTINGS_KEY`（`localStorage`）へ追加し、`applySavedSettings()`（`09-io-save-load.js`）で復元：`practiceLoops`・`gapMs`・`listenReps`・`recTailMs`・`metronome`・`metroVol`・`countIn`・`progressiveSpeed`。
+- ＋新規：**チャンク別の練習統計**を `lilt.shadow.<contentBase>` という別キーに保存（`{paraId:{attempts,lastAt,selfRating}}`）。Tier 3 の SRS / 連続記録へそのまま橋渡しできる軽量データ。録音Blob自体はlocalStorageに入れない（容量上限のため）。
+
+### 統合ポイント（既存コードとの接続）
+- **モデル再生区間**：`PARAS[pi].start..end`（チャンクリピートと同じ）。シークは既存 `jumpTo(annSec)`（`timeOffset` 補正・local/YT両対応済み）を再利用。
+- **チャンク終端検知**：`checkChunkRepeat()` と同じ「`annSec >= p.end - ε` で停止」を、練習ループ用に**専用ハンドラ化**。☆改善：別 `requestAnimationFrame` を新設せず**既存の `timeupdate`／YT tick に相乗り**し、`shadowMode` 時だけ `shadowTick(rawSec)` を呼ぶ（タイマー二重化・ドリフトを回避）。
+- **速度・ピッチ**：`applyPlaybackSpeed()`（`preservesPitch` 設定済み）と `playSpeed` を流用。練習用に一時的な速度（例 0.75×）を当て、ループ終了で元に戻す。
+- **UI差し込み**：`renderTranscript()`（`03-render-sync.js`）の `para-head`（現状 `para-time` + `para-repeat🔁`）に **🎤 / ▶モデル / ▶自分 / A·B** ボタン群を追加。`para-repeat` の class/CSS変数（`--accent` 等）と同じ流儀で実装。
 
 ### 技術スタックと前提
-- **録音**：`navigator.mediaDevices.getUserMedia({audio:true})` → `MediaRecorder`（Chrome/Edge は `audio/webm;codecs=opus`）。`localhost` は secure context なのでマイク許可可能。
-- **A/B再生**：モデル＝既存 `vid`/YT をチャンク区間でシーク再生、学習者＝`<audio>` 要素で録音 Blob を再生。
-- **波形**：Web Audio `decodeAudioData` → `<canvas>` に振幅エンベロープ描画。**モデル側はローカル/バックエンド配信のメディアのみ対応**（YouTube iframe は音声を取得できないため、その場合は学習者波形のみ＋注記）。
-- **メトロノーム**：既存 `tempoWordStarts()` の語頭オンセットに合わせて WebAudio でクリック音をスケジュール。
+- **録音**：`navigator.mediaDevices.getUserMedia({audio:true})` → `MediaRecorder`。☆改善：**mimeType フォールバック**で互換性確保（`audio/webm;codecs=opus` → `audio/webm` → `audio/mp4`。`MediaRecorder.isTypeSupported()` で判定）。ストリームは初回取得して保持（再取得のたびの許可ダイアログを避ける）。`localhost` は secure context のため許可可能。
+- **A/B再生**：モデル＝既存 `vid`/YT をチャンク区間でシーク再生、学習者＝専用 `<audio id="rec-audio">` で Blob 再生。☆改善：**ラウドネス簡易正規化**（録音Blobを `AnalyserNode`/RMSで測り `GainNode` で平準化）し、音量差で「自分の方が下手」に錯覚しないようにする。
+- **波形**：Web Audio `decodeAudioData` → `<canvas>` に **RMSエンベロープ**描画。**モデル側はローカル/バックエンド配信メディアのみ**（YouTube iframe は音声バッファ取得不可 → 学習者波形のみ＋注記）。モデル波形は `vid` 全体を一度だけ `decodeAudioData` し、チャンク区間を切り出してキャッシュ。
+- **メトロノーム**：`tempoWordStarts()` の語頭オンセットに合わせ `AudioContext` でクリック音をスケジュール（強勢語=強拍 / 弱化語=弱拍）。
 
 ### 実装ステップ
 
 **Step 1 — 録音 + 単チャンク A/B（MVP）**
-- `js/10-shadowing.js`：`startRec(paraId)` / `stopRec()` / `playModel(paraId)` / `playRecording(paraId)` / `toggleAB(paraId)`。
-- `getUserMedia` は初回のみ取得しストリーム保持。録音は `chunkRepeat` の区間（`PARAS[id].start..end`）に対応。
-- `renderTranscript`（`03-render-sync.js`）の `para-head` に `🎤` ボタンを追加（録音中は赤表示）。録音済み段落には ▶モデル / ▶自分 / A/B ボタンを表示。
-- 受け入れ基準：任意チャンクを録音 → 自分の声を即再生 → モデルと交互比較できる。
+- `10-shadowing.js`：`startRec(paraId)` / `stopRec()` / `playModel(paraId)` / `playRecording(paraId[,take])` / `toggleAB(paraId)`。
+- 録音区間は `PARAS[id].start..end`。☆改善：**チャンク長ぶんで自動停止**（`recTailMs` の余白付き）＝停止ボタン不要。録音中は **🎤 を赤表示＋簡易VUメーター**（`AnalyserNode`）で入力レベルを可視化。
+- ☆改善：**カウントイン（3·2·1）**を録音前に表示／発音し、頭切れを防止。
+- ＋新規：**マイク許可エラーのハンドリング**（`NotAllowedError`/`NotFoundError`）を `showToast` で明示。
+- `para-head` に 🎤 を追加。録音済みチャンクは ▶モデル / ▶自分 / A·B を表示。
+- 受け入れ基準：任意チャンクを録音 → 自動停止 → 自分の声を即再生 → モデルと交互比較できる。マイク不可時も明確なメッセージが出る。
 
 **Step 2 — 練習ループ状態機械（聴く→間→録音→比較）**
-- `practiceChunk(paraId, {loops, gapMs, speed})` を実装。フェーズ：`listen`（モデル再生）→ `gap`（無音待機）→ `record`（チャンク長ぶん自動録音）→ `compare`（自分→モデル）→ 次ループ。
-- 既存 `checkChunkRepeat()` を拡張せず、専用の `requestAnimationFrame`/タイマー駆動の状態機械として実装（再生位置監視は `vid.currentTime` を流用）。
-- コントロールバーに **ループ回数（1/2/3/∞）** と **ポーズ長** のセレクタ。`SETTINGS` に保存。
-- 受け入れ基準：1ボタンで「聴く→間→録音→比較」を N 回自動で回せる。
+- `startPractice(paraId)` / `stopPractice()`。フェーズ：`countIn`（任意）→ `listen`（モデル再生 ×`listenReps`）→ `gap`（無音待機 `gapMs`）→ `record`（自動録音）→ `compare`（自分→モデル）→ 次ループ。状態は `practiceState={paraId,phase,loop,...}`。
+- ☆改善：駆動は**既存tickに相乗り**（`shadowTick`）。区間監視は `jumpTo`＋終端検知を流用。
+- ☆改善：**漸進スピード（progressiveSpeed）**＝ループが進むごとに 0.75×→1.0× へ自動ランプ（任意設定）。
+- ＋新規：**一時停止/再開・次チャンクへスキップ・成功で自動的に次チャンクへ進む（auto-advance）**。
+- ＋新規：**比較後の自己評価（😟/😐/😄 もしくは ★1–3）**を記録し `lilt.shadow.<base>` に保存（Tier 3 SRS の種）。
+- コントロールバーに **ループ回数（1/2/3/∞）／ポーズ長／聴く回数** のセレクタ（`SETTINGS` 保存）。
+- 受け入れ基準：1操作で「聴く→間→録音→比較」を N 回自動で回せ、一時停止・スキップ・自己評価が効く。
 
 **Step 3 — 波形オーバーレイ**
-- 段落展開時に `<canvas class="wave">` を差し込み、`decodeAudioData` でモデルチャンク（ローカル/バックエンド音源）と学習者録音をデコード → 時間正規化して上下に重ね描画。
-- ズレの可視化（語頭オンセット線を `tempoWordStarts` から重畳）でリズム比較を支援。
-- 受け入れ基準：ローカル/バックエンド動画で、モデルと自分の波形が同一チャンク幅で重なって見える。
+- チャンク展開時に `<canvas class="wave">` を差し込み、モデル（ローカル/バックエンド音源）と学習者録音を `decodeAudioData` → 時間正規化して上下に重ね描画。
+- ☆改善：**語頭オンセット線**（`tempoWordStarts`）を両波形に重畳し、**尺差（テンポ）readout**（例「あなたは 12% 遅い」＝録音長 ÷ モデル長）を表示。
+- ＋新規：波形クリックでその位置から部分再生（細部のリズム確認）。
+- 受け入れ基準：ローカル/バックエンド動画で、モデルと自分の波形＋オンセット線が同一チャンク幅で重なって見え、尺差が数値で出る。
 
 **Step 4 — メトロノーム / ビート**
-- `scheduleMetronome(paraId)`：`tempoWordStarts` の各オンセット時刻に WebAudio クリックを `AudioContext.currentTime` 基準でスケジュール。強勢語は強拍、弱化語は弱拍に。
-- コントロールバーに **♩ メトロノーム** トグル（`SETTINGS` 保存）。
-- 受け入れ基準：チャンク再生に合わせてプロソディのビートが鳴る。
+- `scheduleMetronome(paraId)`：`tempoWordStarts` の各オンセット時刻に `AudioContext.currentTime` 基準でクリックをスケジュール（強勢=強拍 / 弱化=弱拍）。`playSpeed` に追従。
+- ☆改善：**カウントイン小節**＋**音量（metroVol）**設定。コントロールバーに **♩ メトロノーム** トグル（`SETTINGS` 保存）。
+- 受け入れ基準：チャンク再生に同期してプロソディのビートが鳴り、速度変更にも追従する。
 
-**Step 5 — 永続化（任意）**
-- FSA フォルダ選択時、録音を `rec/{paraId}.webm` に保存し、再読込時に復元。
+**Step 5 — 永続化・エクスポート（任意）**
+- FSA フォルダ選択時、録音を `rec/<base>/<paraId>__<timestamp>.webm` に保存し、再読込時に復元。
+- ＋新規：FSA 非対応でも**単一テイクをダウンロード**（`<a download>`）で持ち出し可能に。
+- ＋新規：練習統計（試行回数/自己評価/最終練習日）を**チャンクリストにバッジ表示**（Tier 3 への布石）。
+
+### ＋新規：キーボードショートカット（ハンズフリー練習）
+シャドーイングは口と耳が塞がるため、`shadowMode` 中のみ有効なショートカットを用意（入力欄フォーカス時は無効化）：
+`Space`=モデル再生/停止・`R`=録音・`A`=自分の声・`B`=A/Bトグル・`N`/`P`=次/前チャンク・`Enter`=練習ループ開始/停止・`1/2/3`=自己評価。
+
+### ＋新規：連続シャドーイング・モード（将来オプション）
+動画を通しで再生し、**各チャンク終端で自動ポーズ→録音ウィンドウ→続行**する「流し練習」。既存の終端検知（`checkChunkRepeat` 系）を全チャンクへ一般化すれば実現でき、Tier 1 基盤の自然な拡張になる。
 
 ### 変更ファイル
 | ファイル | 変更 |
 |---|---|
-| `js/10-shadowing.js`（新規）| 録音・A/B・練習ループ・波形・メトロノームのロジック |
-| `js/03-render-sync.js` | `para-head` に 🎤/▶/AB ボタン、段落に `<canvas class="wave">` を追加 |
-| `js/02-state.js` | `SETTINGS` に `practiceLoops`/`gapMs`/`metronome`/`recSpeed` を追加 |
-| `index.html` | `<script src="js/10-shadowing.js">` を init 直前に挿入、コントロールバーに 🎧/ループ/ポーズ/♩ を追加 |
-| `styles.css` | 録音ボタン・波形キャンバス・練習パネルのスタイル |
-| 再利用 | `chunkRepeat`（区間）、`tempoWordStarts`/`wordWeight`（オンセット）、`applyPlaybackSpeed`（ピッチ保持）、`saveSettings`、FSA保存 |
+| `js/10-shadowing.js`（新規）| 録音・自動停止・VU・A/B・練習ループ状態機械・波形・メトロノーム・ショートカット・統計 |
+| `js/03-render-sync.js` | `para-head` に 🎤/▶/A·B ボタン、チャンクに `<canvas class="wave">` と統計バッジ。`shadowMode` 時のみ `shadowTick` 呼び出しを `syncHighlight` 経路に追加 |
+| `js/04-player.js` | `timeupdate`/YT tick から `shadowTick(rawSec)` をフック（`shadowMode` 時のみ）。練習用の一時速度の保存/復帰 |
+| `js/02-state.js` | `shadowMode`/`practiceState`/`recStore` 等の state、`SETTINGS` 既定値の追加 |
+| `js/09-io-save-load.js` | `applySavedSettings()` で新設定の復元、FSA への録音保存/復元、統計キーの読み書き |
+| `index.html` | `<script src="js/10-shadowing.js">` を init 直前へ／`10-init.js`→`11-init.js`、コントロールバーに 🎧 シャドーイング・ループ/ポーズ/聴く回数・♩、隠し `<audio id="rec-audio">` を追加 |
+| `styles.css` | 🎤/▶/A·B ボタン・VUメーター・波形キャンバス・練習パネル・自己評価・統計バッジのスタイル（既存 `ctrl-btn`/`para-repeat`/CSS変数を踏襲） |
+| 再利用 | `jumpTo`（区間シーク）、`checkChunkRepeat`流の終端検知、`tempoWordStarts`/`wordWeight`（オンセット）、`applyPlaybackSpeed`/`playSpeed`（ピッチ保持）、`saveSettings`/`applySavedSettings`、FSA保存、同期tick |
 
 ### 制約・注意
-- **YouTube iframe は音声取得不可** → 波形のモデル側はローカル/バックエンド配信メディアのみ。録音・A/B・ループは YT でも可（モデルは iframe 再生）。
-- マイク許可が必要（`localhost`/HTTPS）。`MediaRecorder` 形式は Chrome/Edge 前提。
-- モバイルは設計上プレイヤー専用のため、Tier 1 はまず PC を対象（モバイルは Step 1 の録音/AB のみ将来対応）。
+- **YouTube iframe は音声バッファ取得不可** → 波形・尺差のモデル側はローカル/バックエンド配信メディア限定。録音・A/B・練習ループ・メトロノームは YT でも可（モデルは iframe 再生）。
+- マイク許可が必要（`localhost`/HTTPS）。`MediaRecorder` の対応形式はブラウザ差があるため `isTypeSupported` でフォールバック（Safari は `audio/mp4`）。
+- ＋新規：**プライバシー** — 録音はすべてブラウザ内（メモリ／任意でローカルFSA）に留まり、サーバ送信はしない旨をUIに明記。
+- ＋新規：**アクセシビリティ** — 追加ボタンに `aria-label`、録音状態は色だけでなくテキスト/アイコンでも示す。
+- モバイルは設計上プレイヤー専用。Tier 1 はまず PC を対象とし、モバイルは Step 1（録音/AB）のみ将来対応（スマホにマイクはあるため実現は容易）。
 
 ### 検証
-- Preview（`python -m http.server` + ブラウザ）で：録音→再生→A/B、練習ループの遷移、波形描画、メトロノーム発音、設定永続化を確認。
-- マイクはヘッドレスで自動化しづらいため、UI/状態機械はモックストリームで検証し、実マイクは手動確認。
+- Preview（`python -m http.server` + ブラウザ）で：録音→自動停止→再生→A/B、練習ループの全フェーズ遷移（一時停止/スキップ/自己評価）、波形描画・尺差、メトロノーム同期、ショートカット、設定/統計の永続化を確認。
+- ☆改善：マイクはヘッドレス自動化しづらいため、**`MediaRecorder` をモック**して状態機械・タイマー遷移を検証し、実マイクは手動確認。各 JS は `node --check`、`index.html` の読み込み順（10-shadowing → 11-init）を目視確認。
+- 既存機能の非回帰（カラオケ同期・チャンクリピート・速度/オフセット）を確認。
