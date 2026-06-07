@@ -243,7 +243,7 @@ function persistGenSettings(){
     runpodUrl, runpodApiKey, runpodModel,
     orApiKey, orModel,
     oaiTransKey, oaiTransModel, oaiTransUrl,
-    genOllamaUrl, genModel, genBackend
+    genOllamaUrl
   });
 }
 
@@ -270,8 +270,6 @@ function applySavedSettings(){
   if(typeof s.oaiTransModel === 'string') oaiTransModel = s.oaiTransModel;
   if(typeof s.oaiTransUrl   === 'string') oaiTransUrl   = s.oaiTransUrl;
   if(typeof s.genOllamaUrl  === 'string') genOllamaUrl  = s.genOllamaUrl;
-  if(typeof s.genModel      === 'string') genModel      = s.genModel;
-  if(typeof s.genBackend    === 'string') genBackend    = s.genBackend;
 
   /* コントロールバーのトグル状態を反映 */
   const setOn=(id,on)=>{const b=document.getElementById(id); if(b) b.classList.toggle('on',!!on);};

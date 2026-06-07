@@ -48,10 +48,6 @@ function switchTab(tab,el){
   }
   if(tab==='settings'){
     b.innerHTML=settingsHTML();
-    /* 復元した設定をUIへ反映 */
-    onBackendChange(genBackend);
-    const gb=document.getElementById('gen-backend'); if(gb) gb.value=genBackend;
-    const ki=document.getElementById('gen-apikey'); if(ki) ki.value=genApiKey;
     refreshFolderStatus();
     checkBackendHealth();
   }

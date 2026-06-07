@@ -1,16 +1,16 @@
 # Lilt — プロジェクト分析レポート
-*2026-06-06 時点*
+*2026-06-07 時点 / アプリバージョン `LILT_VERSION = 1.1.0`*
 
 ## 全体構成
-- **バックエンド**（`main.py` / FastAPI）：YouTube URL → `yt-dlp`（480p）+ `youtube-transcript-api`（字幕）→ ローカルLLM（Ollama/Qwen）2段階処理（翻訳＝4b／注釈＝2bにモデル分離可）→ `projects/{video_id}/{video.mp4, data.json, data.md}` に保存（保存時にテンポ時刻を焼き込み）。SSEで進捗配信。エンドポイント：`POST /process`、`GET /projects`、`DELETE /projects/{id}`、`GET /health`（ffmpeg/Ollama/モデル診断）、`/files/*`（動画シーク用Range対応）。CORSは `ALLOWED_ORIGINS` で制限可、起動時に ffmpeg をプリフライトチェック。
+- **バックエンド**（`main.py` / FastAPI）：YouTube URL → `yt-dlp`（480p）+ `youtube-transcript-api`（字幕）→ **英文は字幕をそのまま使用**（`_simple_chunk_transcript` でルールベース段落化）→ **LLMは日本語訳のみ**（`_translate_window`：Ollama / RunPod / OpenRouter / OpenAI を OpenAI互換で統一）→ **発音アノテーションはPythonのルールベース**（`_rule_annotate_para`、LLM不要・即時）→ `projects/{video_id}/{video.mp4, data.json, data.md, info.txt}` に保存（保存時にテンポ時刻を焼き込み）。SSEで進捗配信（翻訳はウィンドウ単位で逐次保存＋進捗送信、タイムアウト時はフェイルファストで英語のみ保存）。エンドポイント：`POST /process`、`GET /projects`、`DELETE /projects/{id}`、`GET /health`（ffmpeg/Ollama/モデル診断）、`/files/*`（動画シーク用Range対応）。CORSは `ALLOWED_ORIGINS` で制限可、起動時に ffmpeg をプリフライトチェック。動画DL済みなら再DLをスキップして字幕取得から再開。
 - **起動**：`start.bat` がワンクリックで ffmpeg 自動導入 → Ollama 起動（`KEEP_ALIVE`/`NUM_PARALLEL` 調整）→ バックエンド/フロント/ブラウザを自動起動。
-- **フロントエンド**：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01-data.js`〜`10-init.js`（関心ごとに分割した順序付きクラシックスクリプト）。プレイヤー＋アノテーション表示＋生成UI。バックエンドおよび Ollama/OpenAI と直接通信。
+- **フロントエンド**：`index.html`（マークアップ）＋ `styles.css` ＋ `js/01-data.js`〜`10-init.js`（関心ごとに分割した順序付きクラシックスクリプト）。プレイヤー＋アノテーション表示＋生成UI。バックエンドおよび LLMプロバイダ（Ollama/RunPod/OpenRouter/OpenAI）と直接通信。
 - **データ構造**：`paras[{ id, start, end, en, ja, words[{ t, ws, stress, inton, elision, note, syl }] }]`
 
 ---
 
 ## 1. 現在実装済みの機能
-*（★ = 直近セッションで追加）*
+*（★ = 過去セッションで追加 ／ ☆ = 2026-06-07 セッションで追加・変更）*
 
 ### PC版（フル機能）
 
@@ -33,15 +33,17 @@
 - 英語・日本語の対訳表示
 
 **生成・データ管理**
-- **YouTube全自動**パイプライン（バックエンド連携、SSEでリアルタイム進捗バー）。★翻訳＝`qwen3.5:4b`／注釈＝`qwen3.5:2b` のモデル分離に対応
+- **YouTube全自動**パイプライン（バックエンド連携、SSEでリアルタイム進捗バー）。☆**英文はYouTube字幕をそのまま使用**し、LLMは**日本語訳のみ**に使用（発音アノテーションはバックエンドのルールベースで即時生成。旧「翻訳4b／注釈2bのモデル分離」は廃止）
+- ☆**翻訳プロバイダの統合**：旧「YouTube全自動」と「ブラウザ内生成」の2系統設定を**1つの共通設定に統合**。**Ollama / RunPod / OpenRouter / OpenAI** の4種を OpenAI互換で切替（接続テスト付き）。フロント（`resolveTranslateProvider`/`annotateOneParagraph`）とバックエンド（`_translate_chat`）でパラメータ整合（runpod=`enable_thinking:false`、openrouter=`reasoning.enabled:false`＋`HTTP-Referer`/`X-Title`）
 - **保存済みプロジェクト一覧** — ワンクリック読込 ＋ ★🗑 削除（処理途中のものも削除可）
-- ブラウザ内生成：Ollama（ローカル）/ OpenAI 切替、接続テスト、★**バックエンド健全性バッジ**（`/health`：ffmpeg/Ollama/モデル）
+- ☆**バックエンド健全性バッジ**（`/health`：ffmpeg/Ollama/モデル）
 - 文字起こし入力：ペースト ／ ★**MD読込**（`data.md` をテキストエリアへ展開）※PDF読込は★廃止
-- **アノテーションのみ再生成（♺）** — 読込済みチャンクの発音記号だけを、再ダウンロード・再翻訳なしで作り直し（注釈は2bで高速）
+- **アノテーションのみ再生成（♺）** — 読込済みチャンクの発音記号だけを、再ダウンロード・再翻訳なしで作り直し（☆統合済みプロバイダ経由）
 - 動画名フォルダへの保存（`data.json` + `data.md` + 動画コピー）を File System Access API で実行、非対応時はダウンロードにフォールバック
+- ☆**メタ情報 `info.txt`** を動画と同フォルダに保存（Movie title / URL / Use LLM model / Use Lilt Version）
 - ★**タイミング焼き込み**：保存JSONに `ws`＝テンポ配分＋`wsUniform`＝均等割りを両方記録（schema `version:"2"`、オフライン互換）
 - 既知フォルダの動画を開いた際に `data.json` + `data.md` を自動読込
-- ★**設定の永続化**（`localStorage`）：表示レイヤー・リズム・追従・文字サイズ・速度・オフセット・バックエンドURL/モデルを起動時復元
+- ★**設定の永続化**（`localStorage`）：表示レイヤー・リズム・追従・文字サイズ・速度・オフセット・バックエンドURL・☆統合プロバイダ設定（種別/モデル/エンドポイント/APIキー）を起動時復元
 - JSON 入出力、トースト通知、進捗モーダル
 
 **インフラ・保守性（★今セッション）**
@@ -61,10 +63,13 @@
 
 ## 2. 改善できる点
 
-> 進捗マーク（2026-06-06 更新）：✅ 完了 ／ 🟡 一部完了 ／ ⬜ 未着手
+> 進捗マーク（2026-06-07 更新）：✅ 完了 ／ 🟡 一部完了 ／ ⬜ 未着手
+
+**文字起こし精度（2026-06-07 セッションで対応）**
+- ✅ **完了** 以前は LLM に「字幕の区切り直し＋翻訳」を任せていたため、言い換え・単語欠落・`[00:00]` への存在しないテキスト混入（ハルシネーション）が発生していた。→ **英文はYouTube字幕をそのまま使用**（`_simple_chunk_transcript`）し、LLM は**日本語訳のみ**（同数・同順で翻訳、書き換え禁止を明示）。タイムスタンプも字幕由来になり、LLM出力の start/end クランプ処理は不要となり削除。
 
 **タイミング精度（最も効果が大きい）**
-- ⬜ 語レベルの `ws` は*推定値*（LLM/テンポ）で、実測ではない。YouTubeはチャンク単位のタイムスタンプしか返さない。→ バックエンドに**強制アライメント**（例：`whisperx` / `aeneas`）を導入し、語ごとの実タイムスタンプを生成。テンポモデルは「真の値」ではなく「フォールバック」に格下げするのが理想。
+- ⬜ 語レベルの `ws` は*推定値*（テンポモデル）で、実測ではない。YouTubeはチャンク単位のタイムスタンプしか返さない。→ バックエンドに**強制アライメント**（例：`whisperx` / `aeneas`）を導入し、語ごとの実タイムスタンプを生成。テンポモデルは「真の値」ではなく「フォールバック」に格下げするのが理想。
 - ✅ **完了** 保存される `data.json` の `ws` は*均等割り*で、リズム配分は表示時のみ計算される。そのためオフラインのモバイルプレイヤーではリズムが失われる。→ テンポ結果を保存ファイルに焼き込む。
   - 保存時に `ws`＝テンポ配分（オフライン互換）＋ `wsUniform`＝均等割り を両方書き込み（schema `version:"2"`）。フロント（`bakeTempoTimings` / `buildAnnotationJSON`）・バックエンド（`bake_tempo_timings`）の両経路で対応。表示は `♪` トグルで ON＝テンポ再計算／OFF＝`wsUniform` を切替（比較機能を維持）。
 
@@ -73,7 +78,10 @@
   - `main.py` で `shutil.which("ffmpeg")` を起動時チェック＋`GET /health` で状態返却。生成タブに `✓/✗ ffmpeg ／ ✓/✗ Ollama` バッジを表示。さらに `start.bat` が ffmpeg を自動ダウンロード導入。
 - ✅ **完了** ユーザー設定（リズムON/OFF、オフセット、バックエンド、モデル）が永続化されない。→ `localStorage` に保存。
   - `SETTINGS_KEY` に一元保存し、起動時 `applySavedSettings()` で復元（表示レイヤー・リズム・追従・文字サイズ・速度・オフセット・バックエンドURL/モデルを含む）。
-- ⬜ 処理ロジックが二重化：フロントの `annotateOneParagraph` プロンプトとバックエンドのプロンプトが乖離しうる。→ 単一の真実源（共通プロンプト/仕様）に統一。
+- 🟡 **一部完了** 処理ロジックの二重化：フロントの `annotateOneParagraph` とバックエンドのプロンプト/プロバイダ振り分けが乖離しうる。
+  - ✅ プロバイダ振り分けを整合（フロント `resolveTranslateProvider`／バックエンド `_translate_chat` で4プロバイダ・extra body・ヘッダを統一）。設定UIも1系統に統合。
+  - ⬜ プロンプト本文そのものはまだフロント/バックエンドに別実装が残る（共通の真実源への一本化は未）。
+- ✅ **完了（2026-06-07）** RunPod等が無応答だと**ファイルが一切保存されず実質ハング**していた（300秒×ウィンドウ数のタイムアウト）。→ ①翻訳前に英語のみの `data.md` を先行保存＋ウィンドウ毎に逐次保存、②翻訳をウィンドウ単位に分割し**進捗イベント送信**（SSE無通信切断を防止）、③タイムアウト/接続エラーで**フェイルファスト**（英語のみで保存＋警告）、④アノテーション＋最終保存を try/except で保護しエラーをSSEで通知。
 - ✅ **完了** 速度変更でピッチも変わる（ネイティブの `playbackRate`）。→ シャドーイングにはピッチ保持スロー再生（`preservesPitch`）が重要。
   - `applyPlaybackSpeed()` で `preservesPitch`（＋ベンダープレフィックス）を速度変更・動画読込時に適用。
 
@@ -92,7 +100,9 @@
   - ✅ バックエンドのプロジェクト一覧は `fetch` 経由でFSA不要で読込可能（生成タブ）。
   - ⬜ モバイルで生成タブ（プロジェクト読込）への動線は未整備。
 
-> **今セッションでの関連実装（レポート外）：** ① `start.bat` ランチャー（ffmpeg自動導入→Ollama起動→バックエンド/フロント/ブラウザ自動起動）、② Ollama の CPU推論チューニング（`OLLAMA_KEEP_ALIVE=30m` / `OLLAMA_NUM_PARALLEL=1`）、③ 翻訳=`qwen3.5:4b`／注釈=`qwen3.5:2b` のモデル分離、④ プロジェクト削除（🗑）、⑤ 文字起こしPDF読込の廃止。
+> **過去セッションでの関連実装：** ① `start.bat` ランチャー（ffmpeg自動導入→Ollama起動→バックエンド/フロント/ブラウザ自動起動）、② Ollama の CPU推論チューニング（`OLLAMA_KEEP_ALIVE=30m` / `OLLAMA_NUM_PARALLEL=1`）、③ プロジェクト削除（🗑）、④ 文字起こしPDF読込の廃止。
+>
+> **2026-06-07 セッションでの実装：** ① 文字起こしを字幕verbatim化（LLMは翻訳のみ）、② 発音アノテーションのルールベース化（`_rule_annotate_para`、旧 翻訳4b/注釈2b のモデル分離を廃止）、③ LLMプロバイダ設定を1系統に統合し RunPod/OpenRouter/OpenAI/Ollama の4種に対応、④ `/process` パイプライン堅牢化（逐次保存・進捗送信・タイムアウト時フェイルファスト・例外保護）、⑤ `info.txt` 保存・DL済みスキップ、⑥ `LILT_VERSION` 導入。
 
 ---
 

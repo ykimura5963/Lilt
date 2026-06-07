@@ -1,15 +1,10 @@
 /* ── 生成実行 ── */
 async function runGeneration(){
-  /* バックエンド/キーは「設定」タブに移動したため、DOMが無い場合は状態変数を使用 */
-  const backend = document.getElementById('gen-backend')?.value || genBackend || 'ollama';
-  const key = (backend === 'openai')
-    ? (document.getElementById('gen-apikey')?.value?.trim() || genApiKey)
-    : 'ollama';
-  if(backend === 'openai' && !key){ showToast('OpenAI APIキーを「設定」タブで入力してください',true); return; }
-  if(backend === 'runpod' && !runpodApiKey){ showToast('RunPod APIキーを「設定」タブで入力してください',true); return; }
-  genApiKey = key;
-  genBackend = backend;
-  persistGenSettings();
+  /* LLM接続先は「設定」タブの「LLM 接続先（翻訳・発音アノテーション 共通）」を使用 */
+  let prov = resolveTranslateProvider();
+  if(prov.provider !== 'ollama' && !prov.apiKey){
+    showToast(`${prov.provider} のAPIキーを「設定」タブで入力してください`, true); return;
+  }
 
   const rawText = prepTranscriptForAnnotation(document.getElementById('gen-transcript')?.value?.trim());
   if(!rawText){ showToast('文字起こしテキストを入力してください',true); return; }
@@ -30,11 +25,11 @@ async function runGeneration(){
   for(let i=0;i<paras.length;i++){
     if(genAbort){ setModalStatus('キャンセルしました',0); break; }
     const pct = 5 + Math.round((i/paras.length)*90);
-    setModalStatus(`段落 ${i+1}/${paras.length} を処理中... (${genBackend})`, pct);
+    setModalStatus(`段落 ${i+1}/${paras.length} を処理中... (${prov.provider})`, pct);
     addModalParaItem(i, paras[i].en, 'processing');
 
     try{
-      const annotated = await annotateOneParagraph(key, paras[i], i, speed, paras.length);
+      const annotated = await annotateOneParagraph(prov, paras[i], i, speed, paras.length);
       results.push(annotated);
       addModalParaItem(i, paras[i].en, 'done');
     } catch(err){
@@ -48,11 +43,11 @@ async function runGeneration(){
         setModalStatus(`段落${i+1}: 推定データで続行 — ${msg}`, pct, false);
       } else {
         /* バックエンド接続エラー — 初回のみフォールバックダイアログ表示 */
-        if(!backendErrorShown && genBackend !== 'ollama'){
+        if(!backendErrorShown && prov.provider !== 'ollama'){
           backendErrorShown = true;
           document.getElementById('gen-modal').style.display='none';
           const go = confirm(
-            `【${genBackend}】でエラーが発生しました。\n\n` +
+            `【${prov.provider}】でエラーが発生しました。\n\n` +
             `Ollama（ローカル）で残り ${paras.length - i} 段落を続行しますか？\n` +
             `　OK     → Ollamaで続行\n` +
             `　キャンセル → 生成を中止\n\n` +
@@ -60,7 +55,7 @@ async function runGeneration(){
           );
           document.getElementById('gen-modal').style.display='flex';
           if(go){
-            genBackend = 'ollama';
+            prov = ollamaFallbackProvider();
           } else {
             genAbort = true;
           }
@@ -100,13 +95,10 @@ async function regenerateAnnotationsOnly(){
     showToast('再生成するチャンクがありません。\n先にプロジェクトを読み込むか自動処理を実行してください', true, 4500);
     return;
   }
-  const backend = document.getElementById('gen-backend')?.value || genBackend || 'ollama';
-  const key = (backend === 'openai')
-    ? (document.getElementById('gen-apikey')?.value?.trim() || genApiKey)
-    : 'ollama';
-  if(backend === 'openai' && !key){ showToast('OpenAI APIキーを入力してください',true); return; }
-  if(backend === 'runpod' && !runpodApiKey){ showToast('RunPod APIキーを「設定」タブで入力してください',true); return; }
-  genApiKey = key; genBackend = backend;
+  let prov = resolveTranslateProvider();
+  if(prov.provider !== 'ollama' && !prov.apiKey){
+    showToast(`${prov.provider} のAPIキーを「設定」タブで入力してください`, true); return;
+  }
   const speed = document.getElementById('gen-speed')?.value || 'normal';
 
   /* 既存チャンクをスナップショット（英文・和訳・開始終了秒を保持） */
@@ -122,10 +114,10 @@ async function regenerateAnnotationsOnly(){
   for(let i=0;i<src.length;i++){
     if(genAbort){ setModalStatus('キャンセルしました',0); break; }
     const pct = 5 + Math.round((i/src.length)*90);
-    setModalStatus(`チャンク ${i+1}/${src.length} を再生成中... (${genBackend})`, pct);
+    setModalStatus(`チャンク ${i+1}/${src.length} を再生成中... (${prov.provider})`, pct);
     addModalParaItem(i, src[i].en, 'processing');
     try{
-      const annotated = await annotateOneParagraph(key, src[i], i, speed, src.length);
+      const annotated = await annotateOneParagraph(prov, src[i], i, speed, src.length);
       /* 元の和訳・時刻を確実に保持（LLMが書き換えても上書き戻す） */
       annotated.ja    = src[i].ja;
       annotated.start = src[i].start;
@@ -136,18 +128,18 @@ async function regenerateAnnotationsOnly(){
       const msg = err.name==='AbortError' ? 'タイムアウト(240秒超過)' : err.message;
       const isRetriable = err.name==='AbortError' ||
         (typeof err.message==='string' && err.message.startsWith('JSON parse error'));
-      if(!isRetriable && !backendErrorShown2 && genBackend !== 'ollama'){
+      if(!isRetriable && !backendErrorShown2 && prov.provider !== 'ollama'){
         backendErrorShown2 = true;
         document.getElementById('gen-modal').style.display='none';
         const go = confirm(
-          `【${genBackend}】でエラーが発生しました。\n\n` +
+          `【${prov.provider}】でエラーが発生しました。\n\n` +
           `Ollama（ローカル）で残り ${src.length - i} チャンクを続行しますか？\n` +
           `　OK     → Ollamaで続行\n` +
           `　キャンセル → 生成を中止\n\n` +
           `エラー: ${msg}`
         );
         document.getElementById('gen-modal').style.display='flex';
-        if(go){ genBackend = 'ollama'; } else { genAbort = true; }
+        if(go){ prov = ollamaFallbackProvider(); } else { genAbort = true; }
       }
       if(genAbort) break;
       const fb = makeFallbackPara(src[i], i, speed);

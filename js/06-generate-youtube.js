@@ -12,9 +12,6 @@
       { version:"1", contentBase:"xxx", generatedAt:"ISO", paras:[...PARAS] }
 ══════════════════════════════════════════════════════════ */
 
-let genApiKey    = '';
-let genModel     = 'qwen3.5:2b';
-let genBackend   = 'ollama';
 let genOllamaUrl = 'http://localhost:11434';
 let genAbort    = false;
 let fsaDirHandle  = null;  /* 保存先フォルダハンドル */
@@ -339,14 +336,7 @@ function generateHTML(){
 function saveAllSettings(){
   const v = id => document.getElementById(id)?.value ?? null;
   const p = id => document.getElementById(id)?.value?.trim() ?? null;
-  if(p('gen-backend')      !== null) genBackend    = p('gen-backend');
-  if(p('gen-ollama-url')   !== null) genOllamaUrl  = p('gen-ollama-url');
-  if(p('gen-model-name')   !== null) genModel      = p('gen-model-name');
-  if(p('gen-openai-model') !== null) genModel      = p('gen-openai-model');
-  if(p('gen-runpod-url')   !== null) runpodUrl     = p('gen-runpod-url');
-  if(v('gen-runpod-key')   !== null) runpodApiKey  = v('gen-runpod-key').trim();
-  if(p('gen-runpod-model') !== null) runpodModel   = p('gen-runpod-model');
-  if(v('gen-apikey')       !== null) genApiKey     = v('gen-apikey').trim();
+  if(p('yt-ollama-url')    !== null) genOllamaUrl  = p('yt-ollama-url');
   if(p('yt-backend-url')   !== null) ytBackendUrl  = p('yt-backend-url');
   if(p('yt-llm-backend')   !== null) ytLlmBackend  = p('yt-llm-backend');
   if(p('yt-ollama-model')  !== null) ytOllamaModel = p('yt-ollama-model');
@@ -374,19 +364,28 @@ function settingsHTML(){
 </div>
 <div class="lcard">
   <div class="gen-section">
-    <div class="gen-label">AI バックエンド（ブラウザ内生成）</div>
-    <select class="gen-input" id="gen-backend" onchange="onBackendChange(this.value)" style="margin-bottom:6px">
-      <option value="ollama" selected>Ollama (ローカル)</option>
-      <option value="runpod">RunPod Serverless（vLLM）</option>
-      <option value="openai">OpenAI API（汎用OpenAI互換）</option>
+    <div class="gen-label">YouTube全自動 バックエンド（FastAPI）</div>
+    <input class="gen-input" id="yt-backend-url" value="${ytBackendUrl}"
+      oninput="ytBackendUrl=this.value" onchange="persistGenSettings();checkBackendHealth()" placeholder="http://localhost:8000">
+    <div class="gen-status" id="backend-health" style="margin-top:6px">接続確認中...</div>
+    <div class="gen-label" style="margin-top:10px">LLM 接続先（翻訳・発音アノテーション 共通）</div>
+    <div style="font-size:10px;color:var(--muted);margin:-2px 0 6px">
+      ✓ <b>YouTube全自動処理</b>の日本語訳と、<b>ブラウザ内のアノテーション生成・再生成</b>の両方でこの設定を使用します。
+    </div>
+    <select class="gen-input" id="yt-llm-backend" onchange="onYtLlmBackendChange(this.value)">
+      <option value="ollama"     ${ytLlmBackend==='ollama'?'selected':''}>Ollama（ローカル）</option>
+      <option value="runpod"     ${ytLlmBackend==='runpod'?'selected':''}>RunPod Serverless（vLLM）</option>
+      <option value="openrouter" ${ytLlmBackend==='openrouter'?'selected':''}>OpenRouter</option>
+      <option value="openai"     ${ytLlmBackend==='openai'?'selected':''}>OpenAI API（汎用OpenAI互換）</option>
     </select>
-    <div id="ollama-settings">
+
+    <div id="yt-prov-ollama" style="${ytLlmBackend==='ollama'?'':'display:none'}">
       <div class="gen-label" style="margin-top:6px">Ollama URL</div>
-      <input class="gen-input" id="gen-ollama-url" value="${genOllamaUrl}"
+      <input class="gen-input" id="yt-ollama-url" value="${genOllamaUrl}"
         oninput="genOllamaUrl=this.value" onchange="persistGenSettings()" placeholder="http://localhost:11434">
-      <div class="gen-label" style="margin-top:6px">注釈モデル（発音アノテーション）</div>
-      <input class="gen-input" id="gen-model-name" value="${genModel}"
-        oninput="genModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:2b">
+      <div class="gen-label" style="margin-top:6px">モデル（Ollamaタグ）</div>
+      <input class="gen-input" id="yt-ollama-model" value="${ytOllamaModel}"
+        oninput="ytOllamaModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:4b">
       <div class="gen-row" style="margin-top:8px">
         <button class="gen-btn danger" onclick="testOllamaConnection()">⚡ 接続テスト</button>
       </div>
@@ -409,48 +408,6 @@ function settingsHTML(){
         </div>
         <div style="color:var(--muted)">設定後「接続テスト」で確認してください</div>
       </div>
-    </div>
-    <div id="gen-runpod-settings" style="display:none">
-      <div class="gen-label" style="margin-top:6px">RunPod Endpoint URL（runsync可）</div>
-      <input class="gen-input" id="gen-runpod-url" value="${runpodUrl}"
-        oninput="runpodUrl=this.value" onchange="persistGenSettings()"
-        placeholder="https://api.runpod.ai/v2/&lt;id&gt;/runsync">
-      <div class="gen-label" style="margin-top:6px">RunPod API Key</div>
-      <input class="gen-input" type="password" id="gen-runpod-key" value="${runpodApiKey}"
-        oninput="runpodApiKey=this.value" onchange="persistGenSettings()"
-        placeholder="rpa_..." autocomplete="off">
-      <div class="gen-label" style="margin-top:6px">モデルID（vLLMにデプロイ済み）</div>
-      <input class="gen-input" id="gen-runpod-model" value="${runpodModel}"
-        oninput="runpodModel=this.value" onchange="persistGenSettings()" placeholder="qwen/qwen3.5-9b">
-    </div>
-    <div id="openai-settings" style="display:none">
-      <div class="gen-label" style="margin-top:6px">OpenAI APIキー</div>
-      <input class="gen-input" type="password" id="gen-apikey" placeholder="sk-..."
-        value="${genApiKey}" oninput="genApiKey=this.value" autocomplete="off">
-      <div class="gen-label" style="margin-top:6px">モデルID</div>
-      <input class="gen-input" id="gen-openai-model" value="${genModel||'gpt-4o-mini'}"
-        oninput="genModel=this.value" onchange="persistGenSettings()" placeholder="gpt-4o-mini">
-    </div>
-  </div>
-</div>
-<div class="lcard">
-  <div class="gen-section">
-    <div class="gen-label">YouTube全自動 バックエンド（FastAPI）</div>
-    <input class="gen-input" id="yt-backend-url" value="${ytBackendUrl}"
-      oninput="ytBackendUrl=this.value" onchange="persistGenSettings();checkBackendHealth()" placeholder="http://localhost:8000">
-    <div class="gen-status" id="backend-health" style="margin-top:6px">接続確認中...</div>
-    <div class="gen-label" style="margin-top:10px">翻訳 LLM の接続先</div>
-    <select class="gen-input" id="yt-llm-backend" onchange="onYtLlmBackendChange(this.value)">
-      <option value="ollama"     ${ytLlmBackend==='ollama'?'selected':''}>Ollama（ローカル）</option>
-      <option value="runpod"     ${ytLlmBackend==='runpod'?'selected':''}>RunPod Serverless（vLLM）</option>
-      <option value="openrouter" ${ytLlmBackend==='openrouter'?'selected':''}>OpenRouter</option>
-      <option value="openai"     ${ytLlmBackend==='openai'?'selected':''}>OpenAI API（汎用OpenAI互換）</option>
-    </select>
-
-    <div id="yt-prov-ollama" style="${ytLlmBackend==='ollama'?'':'display:none'}">
-      <div class="gen-label" style="margin-top:6px">翻訳モデル（Ollamaタグ）</div>
-      <input class="gen-input" id="yt-ollama-model" value="${ytOllamaModel}"
-        oninput="ytOllamaModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:4b">
     </div>
 
     <div id="yt-prov-runpod" style="${ytLlmBackend==='runpod'?'':'display:none'}">
@@ -519,18 +476,6 @@ function onYtLlmBackendChange(val){
   persistGenSettings();
 }
 
-/* ── ブラウザ内生成のバックエンド切替 ── */
-function onBackendChange(val){
-  genBackend = val;
-  const ol = document.getElementById('ollama-settings');
-  const rp = document.getElementById('gen-runpod-settings');
-  const oa = document.getElementById('openai-settings');
-  if(ol) ol.style.display = val==='ollama' ? '' : 'none';
-  if(rp) rp.style.display = val==='runpod' ? '' : 'none';
-  if(oa) oa.style.display = val==='openai' ? '' : 'none';
-  saveSettings({genBackend});
-}
-
 /* ── Ollama接続テスト ── */
 async function testOllamaConnection(){
   const statusEl = document.getElementById('ollama-test-status');
@@ -547,10 +492,10 @@ async function testOllamaConnection(){
       statusEl.className = 'gen-status ok';
     }
     /* モデル名入力欄に最初のモデルをセット（空の場合） */
-    const mi = document.getElementById('gen-model-name');
+    const mi = document.getElementById('yt-ollama-model');
     if(mi && !mi.value && data.models?.length){
       mi.value = data.models[0].name;
-      genModel  = data.models[0].name;
+      ytOllamaModel = data.models[0].name;
     }
   } catch(err){
     if(statusEl){
