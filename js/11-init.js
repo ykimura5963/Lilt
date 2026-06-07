@@ -1,5 +1,6 @@
 /* ══ INIT ══ */
 applySavedSettings();
+if(typeof initShadowUI==='function') initShadowUI();
 renderTranscript();
 /* 既定タブ＝フレーズ（タブ順: フレーズ → 凡例 → 生成(PC) → 設定） */
 document.getElementById('sbody').innerHTML=phrasesHTML();

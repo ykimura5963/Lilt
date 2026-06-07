@@ -62,8 +62,28 @@
         <option value="0.5">0.5×</option><option value="0.75">0.75×</option>
         <option value="1" selected>1.0×</option><option value="1.25">1.25×</option>
       </select>
+      <select class="spd" id="sh-loops" onchange="setPracticeLoops(this.value)" title="練習ループ回数">
+        <option value="1">🔁×1</option><option value="2" selected>🔁×2</option><option value="3">🔁×3</option><option value="0">🔁∞</option>
+      </select>
+      <select class="spd" id="sh-listen" onchange="setPracticeListen(this.value)" title="録音前にモデルを聴く回数">
+        <option value="1" selected>🔊×1</option><option value="2">🔊×2</option><option value="3">🔊×3</option>
+      </select>
+      <select class="spd" id="sh-gap" onchange="setPracticeGap(this.value)" title="聴く→録音の間（ポーズ）">
+        <option value="600">間0.6s</option><option value="1200" selected>間1.2s</option><option value="2000">間2.0s</option><option value="3000">間3.0s</option>
+      </select>
+      <button class="ctrl-btn" id="btn-sh-auto" onclick="togglePracticeAuto(this)" title="チャンクを自動で進む連続練習">▶▶ 連続</button>
       <div class="prog-wrap"><div class="prog-bg" id="prog-bg" onclick="seekByClick(event)"><div class="prog-fill" id="prog-fill"></div></div></div>
       <span class="time-disp" id="time-disp">0:00</span>
+    </div>
+
+    <!-- ── 練習ステータスバー（練習中のみ表示） ── -->
+    <div id="sh-practice-bar" style="display:none">
+      <span id="sh-practice-phase">練習中…</span>
+      <span class="sh-practice-actions">
+        <button type="button" id="sh-pause-btn" onclick="practiceTogglePause()" title="一時停止 / 再開">⏸</button>
+        <button type="button" onclick="practiceSkip()" title="次のチャンクへ">⏭</button>
+        <button type="button" onclick="stopPractice()" title="練習を終了">⏹</button>
+      </span>
     </div>
 
     <!-- ── スマホ専用：凡例&操作アコーディオン ── -->

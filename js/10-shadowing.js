@@ -73,7 +73,12 @@ async function startRec(pi){
   _shadowMime = _shadowMime || _pickMime();
   await _countIn();
   if(_shadowRecPi !== pi) return;            /* カウントイン中に停止された */
+  _beginRecording(pi, stream);
+}
 
+/* ── 録音の実処理（マイク取得済み前提・カウントインなし）。
+      onDone は保存完了後に呼ばれる（練習ループのステップ解決に使用） ── */
+function _beginRecording(pi, stream, onDone){
   const chunks = [];
   try{
     _shadowRec = _shadowMime ? new MediaRecorder(stream, { mimeType: _shadowMime })
@@ -81,9 +86,9 @@ async function startRec(pi){
   }catch(err){
     showToast('録音の初期化に失敗しました: ' + err.message, true, 4000);
     _shadowRecPi = -1; refreshShadowControls(pi);
+    if(onDone) onDone();
     return;
   }
-
   _shadowRec.ondataavailable = ev => { if(ev.data && ev.data.size) chunks.push(ev.data); };
   _shadowRec.onstop = () => {
     const type = _shadowMime || 'audio/webm';
@@ -92,8 +97,9 @@ async function startRec(pi){
     if(prev && prev.url) URL.revokeObjectURL(prev.url);    /* 旧テイクのObjectURLを解放 */
     _recStore.set(pi, { blob, url: URL.createObjectURL(blob), sec: PARAS[pi].end - PARAS[pi].start });
     refreshShadowControls(pi);
+    if(onDone) onDone();
   };
-
+  _shadowRecPi = pi;
   _shadowRec.start();
   _startVU(stream);
   refreshShadowControls(pi);
@@ -228,12 +234,248 @@ function refreshShadowControls(pi){
     box.innerHTML =
       '<button type="button" class="sh-btn" title="モデルを再生" onclick="playModel(' + pi + ');event.stopPropagation()">▶モデル</button>'
     + '<button type="button" class="sh-btn" title="自分の声を再生" onclick="playRecording(' + pi + ');event.stopPropagation()">▶自分</button>'
-    + '<button type="button" class="sh-btn" title="モデル↔自分を交互再生" onclick="toggleAB(' + pi + ');event.stopPropagation()">A·B</button>';
+    + '<button type="button" class="sh-btn" title="モデル↔自分を交互再生" onclick="toggleAB(' + pi + ');event.stopPropagation()">A·B</button>'
+    + _statsBadge(pi);
   }else{
-    box.innerHTML = '';
+    box.innerHTML = _statsBadge(pi);
   }
+}
+
+/* 練習統計バッジ（試行回数・自己評価） */
+function _statsBadge(pi){
+  const st = _loadStats()[pi];
+  if(!st || (!st.attempts && !st.rating)) return '';
+  const stars = st.rating ? ' ' + '★'.repeat(st.rating) : '';
+  const tries = st.attempts ? ' ×' + st.attempts : '';
+  return '<span class="sh-badge" title="練習回数 / 自己評価">' + tries + stars + '</span>';
 }
 function refreshAllShadowControls(){
   if(typeof PARAS === 'undefined') return;
   PARAS.forEach(p => refreshShadowControls(p.id));
+}
+
+/* ══════════════════════════════════════════════════════════
+   Step 2 — 練習ループ（聴く → 間 → 録音 → 比較）
+   await ベースの状態機械。各ステップは _stepResolve に解決関数を持ち、
+   stopPractice / skip 時に _cancelStep() で確実に解放する。
+══════════════════════════════════════════════════════════ */
+let _practiceOn = false, _practiceAbort = false, _practicePaused = false;
+let _practicePi = -1, _practicePhase = '', _practiceLoop = 0;
+let _stepResolve = null, _gapTimer = null;
+let _prevChunkRepeat = null;
+
+/* 設定（localStorage から初期化。0=∞） */
+let practiceLoops, practiceListenReps, practiceGapMs, _practiceAutoAdvance;
+(function _initPracticeSettings(){
+  const s = (typeof loadSettings === 'function') ? loadSettings() : {};
+  practiceLoops      = Number.isFinite(s.practiceLoops)      ? s.practiceLoops      : 2;
+  practiceListenReps = Number.isFinite(s.practiceListenReps) ? s.practiceListenReps : 1;
+  practiceGapMs      = Number.isFinite(s.practiceGapMs)      ? s.practiceGapMs      : 1200;
+  _practiceAutoAdvance = !!s.practiceAutoAdvance;
+})();
+
+function setPracticeLoops(v){ practiceLoops = parseInt(v, 10) || 0; saveSettings({ practiceLoops }); }
+function setPracticeListen(v){ practiceListenReps = Math.max(1, parseInt(v, 10) || 1); saveSettings({ practiceListenReps }); }
+function setPracticeGap(v){ practiceGapMs = Math.max(0, parseInt(v, 10) || 0); saveSettings({ practiceGapMs }); }
+function togglePracticeAuto(btn){
+  _practiceAutoAdvance = !_practiceAutoAdvance;
+  if(btn) btn.classList.toggle('on', _practiceAutoAdvance);
+  saveSettings({ practiceAutoAdvance: _practiceAutoAdvance });
+  showToast(_practiceAutoAdvance ? '連続練習: ON（チャンクを自動で進む）' : '連続練習: OFF', false, 1800);
+}
+
+/* 起動時に設定値をUIへ反映（11-init.js から呼ぶ） */
+function initShadowUI(){
+  const setV = (id, v) => { const el = document.getElementById(id); if(el) el.value = String(v); };
+  setV('sh-loops', practiceLoops);
+  setV('sh-listen', practiceListenReps);
+  setV('sh-gap', practiceGapMs);
+  const ab = document.getElementById('btn-sh-auto');
+  if(ab) ab.classList.toggle('on', _practiceAutoAdvance);
+}
+
+function _micError(err){
+  const msg = err && err.name === 'NotAllowedError' ? 'マイクの使用が許可されませんでした'
+            : err && err.name === 'NotFoundError'   ? 'マイクが見つかりません'
+            : 'マイクを利用できません';
+  showToast(msg, true, 4000);
+}
+
+/* ── await ステップ群 ── */
+function _finishStep(){ const r = _stepResolve; _stepResolve = null; if(r) r(); }
+
+function _waitModel(pi){
+  return new Promise(resolve => {
+    _stepResolve = resolve;
+    _stopRecAudio(); _clearModelStop();
+    jumpTo(PARAS[pi].start);
+    const durMs = (PARAS[pi].end - PARAS[pi].start) * 1000 / (playSpeed || 1) + 80;
+    _modelStopTimer = setTimeout(() => { _pauseModel(); _finishStep(); }, durMs);
+  });
+}
+function _waitRecPlay(pi){
+  return new Promise(resolve => {
+    _stepResolve = resolve;
+    const rec = _recStore.get(pi);
+    const a = document.getElementById('rec-audio');
+    if(!rec || !a){ _finishStep(); return; }
+    a.onended = () => { a.onended = null; _finishStep(); };
+    playRecording(pi);
+  });
+}
+function _waitGap(ms){
+  return new Promise(resolve => {
+    _stepResolve = resolve;
+    _gapTimer = setTimeout(() => { _gapTimer = null; _finishStep(); }, ms);
+  });
+}
+async function _waitRecord(pi){
+  await _ensureMic();                       /* 失敗時は例外（呼び出し側で捕捉） */
+  _shadowMime = _shadowMime || _pickMime();
+  return new Promise(resolve => {
+    _stepResolve = resolve;
+    _beginRecording(pi, _shadowStream, () => _finishStep());
+  });
+}
+/* 一時停止ゲート：再開 or 中止まで待つ */
+async function _gate(){ while(_practicePaused && !_practiceAbort){ await sleep(150); } }
+
+/* 進行中ステップを強制解放（停止／スキップ用） */
+function _cancelStep(){
+  if(_gapTimer){ clearTimeout(_gapTimer); _gapTimer = null; }
+  _clearModelStop(); _pauseModel(); _stopRecAudio();
+  const a = document.getElementById('rec-audio'); if(a) a.onended = null;
+  if(_shadowRec && _shadowRec.state !== 'inactive'){ try{ _shadowRec.stop(); }catch(e){} }
+  if(_shadowStopTimer){ clearTimeout(_shadowStopTimer); _shadowStopTimer = null; }
+  _finishStep();
+}
+
+function _setPhase(pi, phase){ _practicePi = pi; _practicePhase = phase; _updatePracticeBar(); }
+
+/* ── 1チャンクを practiceLoops 回まわす。完走 true / 中止 false ── */
+async function _runChunk(pi){
+  const loops = practiceLoops > 0 ? practiceLoops : Infinity;
+  for(let loop = 0; loop < loops; loop++){
+    _practiceLoop = loop;
+    await _gate(); if(_practiceAbort) return false;
+    _setPhase(pi, 'listen');
+    for(let r = 0; r < Math.max(1, practiceListenReps); r++){
+      if(_practiceAbort) return false;
+      await _waitModel(pi);
+    }
+    await _gate(); if(_practiceAbort) return false;
+    _setPhase(pi, 'gap');    await _waitGap(practiceGapMs);  if(_practiceAbort) return false;
+    await _gate(); if(_practiceAbort) return false;
+    _setPhase(pi, 'record');
+    try{ await _waitRecord(pi); }
+    catch(err){ _micError(err); _practiceAbort = true; return false; }
+    if(_practiceAbort) return false;
+    await _gate(); if(_practiceAbort) return false;
+    _setPhase(pi, 'compare');
+    await _waitRecPlay(pi); if(_practiceAbort) return false;
+    await _waitModel(pi);   if(_practiceAbort) return false;
+  }
+  return true;
+}
+
+/* ── 練習開始（指定チャンクから。連続練習ONなら末尾まで自動で進む） ── */
+async function startPractice(pi){
+  if(pi < 0 || pi >= PARAS.length) return;
+  if(_practiceOn){ stopPractice(); await sleep(100); }
+  try{ await _ensureMic(); }catch(err){ _micError(err); return; }
+
+  _practiceOn = true; _practiceAbort = false; _practicePaused = false;
+  _prevChunkRepeat = { on: chunkRepeatOn, pi: chunkRepeatPi };
+  chunkRepeatOn = false; updateChunkRepeatUI();   /* 練習中はチャンクリピートを無効化 */
+  _showPracticeBar(true);
+
+  let cur = pi;
+  while(cur < PARAS.length && !_practiceAbort){
+    const ok = await _runChunk(cur);
+    if(!ok) break;                                 /* 中止 */
+    _incAttempt(cur);
+    if(_practiceAutoAdvance){
+      _setPhase(cur, 'next');
+      await sleep(700);
+      cur++;
+    }else{
+      _setPhase(cur, 'rate');
+      _promptRating(cur);
+      break;
+    }
+  }
+  _endPractice(_practiceAbort);
+}
+
+function stopPractice(){
+  if(!_practiceOn) return;
+  _practiceAbort = true; _practicePaused = false;
+  _cancelStep();
+}
+function practiceTogglePause(){
+  if(!_practiceOn) return;
+  _practicePaused = !_practicePaused;
+  if(_practicePaused){ _pauseModel(); _stopRecAudio(); }
+  _updatePracticeBar();
+}
+function practiceSkip(){
+  if(!_practiceOn) return;
+  const nx = _practicePi + 1;
+  stopPractice();
+  setTimeout(() => { if(nx < PARAS.length) startPractice(nx); }, 150);
+}
+
+function _endPractice(aborted){
+  _practiceOn = false; _practicePaused = false; _practiceAbort = false;
+  if(_prevChunkRepeat){
+    chunkRepeatOn = _prevChunkRepeat.on; chunkRepeatPi = _prevChunkRepeat.pi;
+    updateChunkRepeatUI(); _prevChunkRepeat = null;
+  }
+  _pauseModel(); _stopRecAudio(); _stopVU();
+  _shadowRecPi = -1;
+  _showPracticeBar(false);
+  refreshAllShadowControls();
+}
+
+/* ── 練習ステータスバー ── */
+function _showPracticeBar(show){
+  const b = document.getElementById('sh-practice-bar');
+  if(b) b.style.display = show ? 'flex' : 'none';
+  if(show) _updatePracticeBar();
+}
+function _updatePracticeBar(){
+  const t = document.getElementById('sh-practice-phase');
+  if(t){
+    const names = { listen:'🔊 聴く', gap:'⏸ 間', record:'🎤 録音', compare:'🆎 比較', next:'⏭ 次へ', rate:'⭐ 評価' };
+    const loopInfo = practiceLoops > 0 ? ` ループ${_practiceLoop + 1}/${practiceLoops}` : ` ループ${_practiceLoop + 1}`;
+    t.textContent = `チャンク ${_practicePi + 1}：${names[_practicePhase] || ''}${loopInfo}`;
+  }
+  const pb = document.getElementById('sh-pause-btn'); if(pb) pb.textContent = _practicePaused ? '▶' : '⏸';
+}
+
+/* ── 練習統計（チャンク別・Tier 3 SRS の種） ── */
+function _statsKey(){ return 'lilt.shadow.' + ((typeof currentBase !== 'undefined' && currentBase) || 'unknown'); }
+function _loadStats(){ try{ return JSON.parse(localStorage.getItem(_statsKey())) || {}; }catch(e){ return {}; } }
+function _saveStat(pi, patch){
+  const s = _loadStats();
+  s[pi] = { ...(s[pi] || {}), ...patch };
+  try{ localStorage.setItem(_statsKey(), JSON.stringify(s)); }catch(e){}
+}
+function _incAttempt(pi){
+  const cur = (_loadStats()[pi] || {}).attempts || 0;
+  _saveStat(pi, { attempts: cur + 1, lastAt: Date.now() });
+}
+function rateChunk(pi, n){
+  _saveStat(pi, { rating: n, lastAt: Date.now() });
+  showToast('自己評価を記録: ' + '★'.repeat(n), false, 1500);
+  refreshShadowControls(pi);
+}
+function _promptRating(pi){
+  const box = document.getElementById('sh-' + pi);
+  if(!box) return;
+  box.innerHTML =
+      '<span class="sh-ind" style="color:var(--accent)">自己評価</span>'
+    + [1, 2, 3].map(n => '<button type="button" class="sh-btn" title="' + n + '段階" onclick="rateChunk(' + pi + ',' + n + ');event.stopPropagation()">' + '★'.repeat(n) + '</button>').join('')
+    + '<button type="button" class="sh-btn" title="モデルを再生" onclick="playModel(' + pi + ');event.stopPropagation()">▶モデル</button>'
+    + '<button type="button" class="sh-btn" title="自分の声を再生" onclick="playRecording(' + pi + ');event.stopPropagation()">▶自分</button>';
 }

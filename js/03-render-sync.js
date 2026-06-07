@@ -57,6 +57,7 @@ function renderTranscript(){
     html+=`<div class="para-time">${mm}:${ss}</div>`;
     html+=`<button type="button" class="para-repeat${chunkRepeatOn&&chunkRepeatPi===p.id?' on':''}" data-pi="${p.id}" onclick="setChunkRepeat(${p.id},event)" title="この段落をリピート再生">🔁</button>`;
     html+=`<button type="button" class="sh-rec" data-pi="${p.id}" onclick="shadowRecordToggle(${p.id},event)" title="このチャンクを録音（クリックで開始/停止）">🎤</button>`;
+    html+=`<button type="button" class="sh-practice" data-pi="${p.id}" onclick="startPractice(${p.id});event.stopPropagation()" title="このチャンクから練習（聴く→間→録音→比較）">🎧</button>`;
     html+=`<span class="sh-controls" id="sh-${p.id}"></span>`;
     html+=`</div>`;
     html+=`<div class="sentence" id="sent-${p.id}">`;
