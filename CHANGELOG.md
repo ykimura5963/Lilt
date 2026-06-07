@@ -1,0 +1,60 @@
+# 変更履歴 / Changelog
+
+本ファイルは Lilt の主な変更を記録します。
+形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
+バージョン番号は [セマンティック バージョニング](https://semver.org/lang/ja/)（`MAJOR.MINOR.PATCH`）に従います。
+
+バージョンの基準：
+- **MAJOR** … 後方互換を壊す変更（保存データ形式・フォルダ構成・既存プロジェクト読込の前提が変わる）
+- **MINOR** … 後方互換を保った機能追加・改善
+- **PATCH** … 後方互換を保った不具合修正
+
+作成物の `info.txt` に記録される `Use Lilt Version` と、この履歴を突き合わせることで、
+「そのデータがどの版で生成されたか」を追跡できます。
+
+---
+
+## [Unreleased]
+
+（次回リリース予定の変更をここに追記）
+
+---
+
+## [1.1.0] - 2026-06-07
+
+### Changed（変更）
+- **文字起こしは YouTube 字幕をそのまま使用**するように変更。以前は LLM に「字幕の区切り直し＋翻訳」を任せていたため、言い換え・単語欠落・`[00:00]` への存在しないテキスト混入（ハルシネーション）が発生していた。英文は `_simple_chunk_transcript` でルールベース段落化し、**LLM は日本語訳のみ**に使用（同数・同順で翻訳、書き換え禁止を明示）。
+- **発音アノテーションをルールベース化**（`_rule_annotate_para`）。旧「翻訳 `qwen3.5:4b` ／ 注釈 `qwen3.5:2b` のモデル分離」は廃止し、AI は翻訳のみ使用する構成へ統一。
+- **LLM プロバイダ設定を 1 系統に統合**。旧「YouTube 全自動 バックエンド」と「AI バックエンド（ブラウザ内生成）」の 2 系統を共通設定へ集約し、フロント（`resolveTranslateProvider` / `annotateOneParagraph`）とバックエンド（`_translate_chat`）でパラメータを整合。
+
+### Added（追加）
+- **翻訳プロバイダに RunPod / OpenRouter を追加**し、**Ollama / RunPod / OpenRouter / OpenAI** の 4 種を OpenAI 互換で切替可能に（runpod=`enable_thinking:false`、openrouter=`reasoning.enabled:false` ＋ `HTTP-Referer`/`X-Title` ヘッダ）。
+- **メタ情報 `info.txt`** を動画と同フォルダに保存（Movie title / URL / Use LLM model / Use Lilt Version）。
+- **動画 DL 済みなら再 DL をスキップ**して字幕取得から再開。
+- アプリバージョン定数 `LILT_VERSION` を導入。
+
+### Fixed（修正）
+- RunPod 等が無応答のとき、ウィンドウごとに 300 秒タイムアウトを繰り返し、**成果物が一切保存されず実質ハング**していた問題を修正：
+  - 翻訳前に英語のみの `data.md` を先行保存し、ウィンドウ単位で逐次保存。
+  - 翻訳をウィンドウ単位に分割し**進捗イベントを送信**（SSE 無通信切断を防止）。
+  - タイムアウト／接続エラーで**フェイルファスト**（英語のみで保存＋警告表示）。
+  - アノテーション＋最終保存を `try/except` で保護し、エラーを SSE で通知（ストリームの無言中断を防止）。
+- LLM が返す `start`/`end` のハルシネーションに起因する表示・並び順の乱れを、字幕由来タイムスタンプの採用により解消（不要になったクランプ処理を削除）。
+
+---
+
+## [1.0.0] - 2026-06-06
+
+初期リリース。YouTube 動画を題材にした発音アノテーション付きシャドーイング学習プレイヤー。
+
+### Added（追加）
+- **YouTube 全自動パイプライン**（FastAPI / `main.py`）：`yt-dlp`（480p）＋ `youtube-transcript-api` → ローカル LLM（Ollama/Qwen）で翻訳・注釈 → `projects/{video_id}/` に `video.mp4` / `data.json` / `data.md` を保存。SSE で進捗配信。
+- **再生・同期**：ローカル動画/音声 または YouTube iframe 再生、単語ごとのカラオケ式ハイライト、再生速度 0.5×〜1.25×（ピッチ保持）、シーク、同期オフセット調整、チャンクリピート、リズム同期（テンポモデル）、自動スクロール追従、文字サイズ調整。
+- **アノテーション表示**：強勢（●/◯）、抑揚カーブ（SVG）、消音・連結（×＋IPA 注記）、音節分割、レイヤー独立トグル、英日対訳。
+- **生成・データ管理**：保存済みプロジェクト一覧（読込／削除）、ブラウザ内生成（Ollama / OpenAI 切替・接続テスト）、バックエンド健全性バッジ（`/health`）、MD 読込、アノテーションのみ再生成、File System Access API によるフォルダ保存、タイミング焼き込み（`ws`＋`wsUniform`、schema `version:"2"`）、設定の永続化（`localStorage`）。
+- **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
+- **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
+
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ykimura5963/Lilt/releases/tag/v1.0.0
