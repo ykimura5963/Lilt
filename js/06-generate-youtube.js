@@ -23,7 +23,7 @@ let ytAutoUrl     = '';
 let ytAutoController = null;       /* 全自動処理: 進行中リクエストの即時キャンセル用 */
 let retranslateControllers = {};   /* 日本語訳再生成: video_id -> AbortController */
 let ytBackendUrl  = 'http://localhost:8000';
-let ytOllamaModel = 'qwen3.5:4b';
+let ytOllamaModel = 'qwen3.5:2b';
 /* 翻訳LLMプロバイダ: 'ollama' | 'runpod' | 'openrouter' | 'openai' */
 let ytLlmBackend  = 'ollama';
 /* RunPod */
@@ -308,7 +308,7 @@ function resolveTranslateProvider(){
 
 /* ── フォールバックプロバイダ（Ollama固定）を返す ── */
 function ollamaFallbackProvider(){
-  return { provider:'ollama', endpoint:'', apiKey:'', model: ytOllamaModel || 'qwen3.5:4b' };
+  return { provider:'ollama', endpoint:'', apiKey:'', model: ytOllamaModel || 'qwen3.5:2b' };
 }
 
 /* ── YouTube全自動処理をSSEで実行 ── */

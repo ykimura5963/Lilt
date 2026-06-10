@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.9.0"
+LILT_VERSION = "1.9.1"
 
 app = FastAPI(title="Lilt API")
 
@@ -39,7 +39,7 @@ app.add_middleware(
 
 PROJECTS_DIR  = "./projects"
 OLLAMA_URL    = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL  = os.environ.get("OLLAMA_MODEL", "qwen3.5:4b")
+OLLAMA_MODEL  = os.environ.get("OLLAMA_MODEL", "qwen3.5:2b")
 
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 
@@ -348,7 +348,9 @@ def _translate_window(
 ) -> list:
     """1ウィンドウ分の英文を翻訳し translations(list[str]) を返す。失敗時は例外を送出。
     event_stream から executor 経由でウィンドウごとに呼び出す（進捗送信のため）。"""
-    num_predict = min(4096, sum(len(p["en"].split()) for p in window) * 6 + 512)
+    # 日本語訳は英語語数の概ね1.5〜2.5トークン。係数4＋余裕分で十分。
+    # 上限を絞ることで、指示を無視して解説を続ける冗長モデルの暴走も抑制（CPU実行対策）。
+    num_predict = min(1280, sum(len(p["en"].split()) for p in window) * 4 + 256)
     user_content = json.dumps([p["en"] for p in window], ensure_ascii=False)
     messages = [
         {"role": "system", "content": TRANSLATE_ONLY_SYSTEM},
@@ -375,7 +377,7 @@ def _translate_one(en: str, provider: str, ollama_url: str, model: str,
             "translation of the user's sentence — no quotes, no notes, no English, no JSON."},
         {"role": "user", "content": en},
     ]
-    num_predict = min(1024, len(en.split()) * 6 + 128)
+    num_predict = min(512, len(en.split()) * 4 + 96)
     raw = _translate_chat(
         messages, num_predict,
         provider=provider, ollama_url=ollama_url, model=model,
@@ -516,7 +518,7 @@ def _ollama_chat(messages: list, base_url: str, model: str, num_predict: int) ->
             "model":   model,
             "stream":  False,
             "think":   False,
-            "options": {"temperature": 0, "num_predict": num_predict, "num_ctx": 4096},
+            "options": {"temperature": 0, "num_predict": num_predict, "num_ctx": 2048},
             "messages": messages,
         },
         timeout=180,
