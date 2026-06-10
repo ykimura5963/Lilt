@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.7.0"
+LILT_VERSION = "1.8.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -288,16 +288,24 @@ def _parse_translations(raw: str) -> list:
     if not cand:
         raise ValueError("空のレスポンス（訳文なし）")
 
+    # 末尾のカンマ（trailing comma）を除去（一部モデルが出力しがち）
+    cand_fixed = re.sub(r",(\s*[\]}])", r"\1", cand)
+
     data = None
-    try:
-        data = json.loads(cand)
-    except json.JSONDecodeError:
-        for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
-            try:
-                data = json.loads(cand + suffix)
+    for c in (cand_fixed, cand):
+        try:
+            # strict=False: 文字列内の生の改行/タブなど制御文字を許容
+            data = json.loads(c, strict=False)
+            break
+        except json.JSONDecodeError:
+            for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
+                try:
+                    data = json.loads(c + suffix, strict=False)
+                    break
+                except json.JSONDecodeError:
+                    continue
+            if data is not None:
                 break
-            except json.JSONDecodeError:
-                continue
     if data is None:
         raise ValueError(f"JSON解析不可（{len(cand)}字）")
 
@@ -354,7 +362,7 @@ def _translate_window(
     try:
         return _parse_translations(raw)
     except Exception as e:
-        logger.warning(f"翻訳JSON解析失敗 ({e}) | raw {len(raw or '')}字: {repr((raw or '')[:160])}")
+        logger.warning(f"翻訳JSON解析失敗 ({e}) | raw {len(raw or '')}字: {repr((raw or '')[:500])}")
         raise
 
 

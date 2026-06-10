@@ -40,12 +40,6 @@
           allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe>
       </div>
 
-      <div class="offset-bar">
-        <span style="white-space:nowrap;flex-shrink:0">同期オフセット</span>
-        <input type="range" id="offset-slider" min="-15" max="15" step="0.1" value="0" oninput="updateOffset(this.value)">
-        <span class="offset-val" id="offset-val">0.0 s</span>
-        <span class="offset-reset" onclick="resetOffset()" title="リセット">↺</span>
-      </div>
     </div>
 
     <!-- ── コントロールバー ── -->
@@ -58,6 +52,7 @@
       <button class="ctrl-btn" id="btn-chunk-repeat" type="button" onclick="toggleChunkRepeat()" title="再生中の段落を繰り返し">🔁 チャンク</button>
       <button class="ctrl-btn" id="btn-font-dec" onclick="adjustFontScale(-1)" title="文字を小さく">A−</button>
       <button class="ctrl-btn" id="btn-font-inc" onclick="adjustFontScale(1)" title="文字を大きく">A＋</button>
+      <select class="spd" id="offset-sel" onchange="updateOffset(this.value)" title="同期オフセット（音声が速い→マイナス、遅い→プラス）"></select>
       <select class="spd" id="spd-sel" onchange="setSpeed(this.value)">
         <option value="0.5">0.5×</option><option value="0.75">0.75×</option>
         <option value="1" selected>1.0×</option><option value="1.25">1.25×</option>

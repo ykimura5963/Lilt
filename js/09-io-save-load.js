@@ -296,9 +296,8 @@ function applySavedSettings(){
   applyPlaybackSpeed();
 
   /* オフセット */
-  const osl=document.getElementById('offset-slider'); if(osl) osl.value=timeOffset;
-  const ovl=document.getElementById('offset-val');
-  if(ovl) ovl.textContent=(timeOffset>=0?'+':'')+timeOffset.toFixed(1)+' s';
+  const osl=document.getElementById('offset-sel');
+  if(osl) osl.value=timeOffset.toFixed(1);
 }
 
 /* ── バックエンド健全性チェック（生成タブ表示時） ── */

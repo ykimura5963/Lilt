@@ -81,16 +81,6 @@ header{
   }
 }
 
-.offset-bar{
-  display:flex;align-items:center;gap:8px;padding:4px 10px;flex-shrink:0;
-  background:var(--surf2);border-top:.5px solid var(--bd);
-  font-size:11px;font-family:var(--mono);color:var(--muted);
-}
-.offset-bar input[type=range]{flex:1;accent-color:var(--accent)}
-.offset-val{min-width:48px;color:var(--accent);text-align:right}
-.offset-reset{cursor:pointer;padding:0 4px}
-.offset-reset:hover{color:var(--text)}
-
 /* コントロールバー */
 .ctrl-bar{
   flex-shrink:0;
@@ -106,6 +96,7 @@ header{
 }
 .ctrl-btn.on{background:rgba(245,200,66,.1);color:var(--accent);border-color:rgba(245,200,66,.3)}
 .spd{font-family:var(--mono);font-size:11px;background:var(--surf2);border:.5px solid var(--bd2);color:var(--text);border-radius:5px;padding:4px 6px;cursor:pointer}
+#offset-sel{width:90px;flex-shrink:0}
 .prog-wrap{flex:1;min-width:60px;display:flex;align-items:center}
 .prog-bg{width:100%;height:4px;background:var(--bd2);border-radius:2px;cursor:pointer}
 .prog-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .1s linear;pointer-events:none}

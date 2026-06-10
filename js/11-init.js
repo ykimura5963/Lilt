@@ -1,4 +1,5 @@
 /* ══ INIT ══ */
+populateOffsetOptions();
 applySavedSettings();
 if(typeof initShadowUI==='function') initShadowUI();
 renderTranscript();

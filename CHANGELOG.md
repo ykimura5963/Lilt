@@ -20,6 +20,21 @@
 
 ---
 
+## [1.8.0] - 2026-06-10
+
+### Changed（変更）
+- **同期オフセットのUIを変更**。動画の再生スライダーと紛らわしかったレンジスライダー（動画下の専用バー）を廃止し、コントロールバー内（文字サイズ「A−/A＋」と再生速度の間）に **0.1秒刻みのドロップダウン**として配置。範囲は従来どおり -15.0 s 〜 +15.0 s。
+
+---
+
+## [1.7.1] - 2026-06-10
+
+### Fixed（修正）
+- 翻訳応答のJSON解析（`_parse_translations`）を堅牢化。一部モデル（例: Gemma系）が出力しがちな**末尾カンマ**や**文字列内の生の改行・タブ**で解析失敗（`翻訳JSON解析失敗 (JSON解析不可（N字）)`）していた問題を緩和。
+- 解析失敗時のログに出力する応答プレビューを160字→500字に拡大し、原因調査をしやすくした。
+
+---
+
 ## [1.7.0] - 2026-06-10
 
 ### Added（追加）
@@ -139,7 +154,9 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/ykimura5963/Lilt/compare/v1.7.1...v1.8.0
+[1.7.1]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/ykimura5963/Lilt/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/ykimura5963/Lilt/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...v1.5.0

@@ -145,16 +145,21 @@ function syncHighlight(rawSec){
 }
 
 /* ══ OFFSET ══ */
+/* 同期オフセット セレクトの選択肢を生成（-15.0〜+15.0, 0.1秒刻み） */
+function populateOffsetOptions(){
+  const sel=document.getElementById('offset-sel');
+  if(!sel) return;
+  let html='';
+  for(let i=-150;i<=150;i++){
+    const v=i/10;
+    const label=(v>=0?'+':'')+v.toFixed(1)+' s';
+    html+=`<option value="${v.toFixed(1)}"${i===0?' selected':''}>${label}</option>`;
+  }
+  sel.innerHTML=html;
+}
 function updateOffset(v){
   timeOffset=parseFloat(v);
-  document.getElementById('offset-val').textContent=(timeOffset>=0?'+':'')+timeOffset.toFixed(1)+' s';
   saveSettings({timeOffset});
-}
-function resetOffset(){
-  timeOffset=0;
-  document.getElementById('offset-slider').value=0;
-  document.getElementById('offset-val').textContent='0.0 s';
-  saveSettings({timeOffset:0});
 }
 
 /* ══ 追従 / 文字サイズ トグル ══ */
