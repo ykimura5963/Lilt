@@ -23,7 +23,7 @@ header{
   background:var(--surf);border-bottom:.5px solid var(--bd);
   z-index:20;
 }
-.logo{font-size:12px;font-weight:700;letter-spacing:.12em;color:var(--accent);text-transform:uppercase}
+.logo{font-size:17px;font-weight:700;letter-spacing:.12em;color:var(--accent);text-transform:uppercase}
 .header-sub{font-size:10px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
 
 /* メインエリア: 残り全高を占める */
@@ -65,8 +65,6 @@ header{
   border:.5px solid rgba(245,200,66,.35);background:rgba(245,200,66,.08);color:var(--accent);
 }
 .file-name{font-size:10px;font-family:var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
-.yt-chk{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;flex-shrink:0}
-.yt-chk input{accent-color:var(--accent)}
 
 .video-wrap{position:relative;width:100%;padding-bottom:56.25%;height:0;background:#000;flex-shrink:0}
 .video-wrap video,.video-wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:contain}
@@ -80,16 +78,6 @@ header{
     width:100%;
   }
 }
-
-.offset-bar{
-  display:flex;align-items:center;gap:8px;padding:4px 10px;flex-shrink:0;
-  background:var(--surf2);border-top:.5px solid var(--bd);
-  font-size:11px;font-family:var(--mono);color:var(--muted);
-}
-.offset-bar input[type=range]{flex:1;accent-color:var(--accent)}
-.offset-val{min-width:48px;color:var(--accent);text-align:right}
-.offset-reset{cursor:pointer;padding:0 4px}
-.offset-reset:hover{color:var(--text)}
 
 /* コントロールバー */
 .ctrl-bar{
@@ -105,7 +93,10 @@ header{
   cursor:pointer;transition:all .12s;white-space:nowrap;
 }
 .ctrl-btn.on{background:rgba(245,200,66,.1);color:var(--accent);border-color:rgba(245,200,66,.3)}
+.play-ctrl{font-size:13px;padding:4px 11px;color:var(--text)}
+.play-ctrl:hover{color:var(--accent);border-color:rgba(245,200,66,.35);background:rgba(245,200,66,.08)}
 .spd{font-family:var(--mono);font-size:11px;background:var(--surf2);border:.5px solid var(--bd2);color:var(--text);border-radius:5px;padding:4px 6px;cursor:pointer}
+#offset-sel{width:90px;flex-shrink:0}
 .prog-wrap{flex:1;min-width:60px;display:flex;align-items:center}
 .prog-bg{width:100%;height:4px;background:var(--bd2);border-radius:2px;cursor:pointer}
 .prog-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .1s linear;pointer-events:none}
@@ -128,7 +119,7 @@ header{
 .para-time{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.05em;flex:1}
 .para.active .para-time{color:var(--accent)}
 .para-repeat{
-  flex-shrink:0;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;
+  flex-shrink:0;font-size:15px;padding:5px 10px;border-radius:5px;cursor:pointer;
   border:.5px solid var(--bd2);background:var(--surf2);color:var(--muted);font-family:var(--mono);
   line-height:1.4;
 }
@@ -139,7 +130,7 @@ header{
 
 /* ── シャドーイング（録音 + A/B） ── */
 .sh-rec{
-  flex-shrink:0;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;
+  flex-shrink:0;font-size:15px;padding:5px 10px;border-radius:5px;cursor:pointer;
   border:.5px solid var(--bd2);background:var(--surf2);color:var(--muted);font-family:var(--mono);line-height:1.4;
 }
 .sh-rec:hover{color:var(--danger);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
@@ -153,7 +144,7 @@ header{
 .sh-btn:hover{color:var(--a2);border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.08)}
 .sh-ind{font-family:var(--mono);font-size:10px;color:var(--danger);letter-spacing:.05em}
 .sh-practice{
-  flex-shrink:0;font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;line-height:1.4;
+  flex-shrink:0;font-size:15px;padding:5px 10px;border-radius:5px;cursor:pointer;line-height:1.4;
   border:.5px solid var(--bd2);background:var(--surf2);color:var(--muted);font-family:var(--mono);
 }
 .sh-practice:hover{color:var(--a2);border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.08)}
@@ -334,6 +325,8 @@ header{
 .gen-btn:disabled{opacity:.4;cursor:not-allowed}
 .gen-btn.danger{border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.1);color:var(--a2)}
 .gen-btn.danger:hover{background:rgba(78,173,255,.18)}
+.gen-btn.cancel{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.08);color:rgba(248,113,113,.9)}
+.gen-btn.cancel:hover{background:rgba(248,113,113,.18)}
 .gen-prog-wrap{margin-top:.625rem;display:none}
 .gen-prog-bg{height:3px;background:var(--bd2);border-radius:2px;overflow:hidden}
 .gen-prog-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s}
@@ -359,7 +352,12 @@ header{
 .yt-proj-load:hover{background:rgba(78,173,255,.18)}
 .yt-proj-del{font-size:12px;padding:2px 5px;border-radius:4px;cursor:pointer;border:.5px solid rgba(248,113,113,.35);background:rgba(248,113,113,.07);color:rgba(248,113,113,.8);flex-shrink:0;line-height:1}
 .yt-proj-del:hover{background:rgba(248,113,113,.2);color:#f87171}
+.yt-proj-cancel{font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;border:.5px solid rgba(248,113,113,.35);background:rgba(248,113,113,.07);color:rgba(248,113,113,.85);flex-shrink:0}
+.yt-proj-cancel:hover{background:rgba(248,113,113,.2);color:#f87171}
 .yt-proj-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.lib-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 8px;border:.5px solid var(--bd);border-radius:6px;background:var(--surf);font-family:var(--mono);font-size:12px}
+.lib-item:hover{border-color:var(--bd2)}
+.lib-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .yt-prog-wrap{margin-top:.625rem;background:var(--bd2);border-radius:2px;overflow:hidden;height:3px;display:none}
 .yt-prog-fill{height:100%;background:var(--a2);border-radius:2px;width:0%;transition:width .4s}
 .yt-status{font-size:10px;font-family:var(--mono);color:var(--muted);margin-top:.35rem;min-height:14px;line-height:1.6}

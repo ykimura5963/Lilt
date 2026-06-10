@@ -145,16 +145,21 @@ function syncHighlight(rawSec){
 }
 
 /* ══ OFFSET ══ */
+/* 同期オフセット セレクトの選択肢を生成（-10.0〜+10.0, 1.0秒刻み） */
+function populateOffsetOptions(){
+  const sel=document.getElementById('offset-sel');
+  if(!sel) return;
+  let html='';
+  for(let i=-10;i<=10;i++){
+    const v=i;
+    const label=(v>=0?'+':'')+v.toFixed(1)+' s';
+    html+=`<option value="${v.toFixed(1)}"${i===0?' selected':''}>${label}</option>`;
+  }
+  sel.innerHTML=html;
+}
 function updateOffset(v){
   timeOffset=parseFloat(v);
-  document.getElementById('offset-val').textContent=(timeOffset>=0?'+':'')+timeOffset.toFixed(1)+' s';
   saveSettings({timeOffset});
-}
-function resetOffset(){
-  timeOffset=0;
-  document.getElementById('offset-slider').value=0;
-  document.getElementById('offset-val').textContent='0.0 s';
-  saveSettings({timeOffset:0});
 }
 
 /* ══ 追従 / 文字サイズ トグル ══ */
@@ -164,9 +169,10 @@ function toggleAutoFollow(btn){
   saveSettings({autoFollow});
   showToast(autoFollow?'📌 追従 ON':'追従 OFF（手動スクロール優先）',false,1800);
 }
-function adjustFontScale(dir){
-  fontScale = Math.min(1.6, Math.max(0.8, +(fontScale + dir*0.1).toFixed(2)));
+function toggleFontScale(btn){
+  fontScale = fontScale>1 ? 1 : 1.2;
   applyFontScale();
+  if(btn) btn.classList.toggle('on', fontScale>1);
   saveSettings({fontScale});
   showToast(`文字サイズ ${Math.round(fontScale*100)}%`, false, 1500);
 }

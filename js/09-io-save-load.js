@@ -232,7 +232,21 @@ function addModalParaItem(idx, text, state){
 }
 function cancelGeneration(){
   genAbort = true;
+  if(genAbortController) genAbortController.abort();
+  cancelActiveRunpodJob();
   document.getElementById('gen-modal').style.display='none';
+}
+
+/* ── 進行中のRunPodジョブをキャンセル（タブを閉じる/キャンセルボタン時） ── */
+function cancelActiveRunpodJob(){
+  const job = window._activeRunpodJob;
+  if(!job) return;
+  window._activeRunpodJob = null;
+  fetch(job.base+'/cancel/'+job.jobId, {
+    method: 'POST',
+    headers: {'Authorization':'Bearer '+job.apiKey},
+    keepalive: true
+  }).catch(()=>{});
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
@@ -255,7 +269,7 @@ function applySavedSettings(){
   if(typeof s.showElision === 'boolean') showElision = s.showElision;
   if(typeof s.rhythmSync  === 'boolean') rhythmSync  = s.rhythmSync;
   if(typeof s.autoFollow  === 'boolean') autoFollow  = s.autoFollow;
-  if(typeof s.fontScale   === 'number')  fontScale   = Math.min(1.6, Math.max(0.8, s.fontScale));
+  if(typeof s.fontScale   === 'number')  fontScale   = s.fontScale>1 ? 1.2 : 1;
   if(typeof s.timeOffset  === 'number')  timeOffset  = s.timeOffset;
   if(typeof s.playSpeed   === 'number')  playSpeed   = s.playSpeed;
   if(typeof s.ytBackendUrl  === 'string') ytBackendUrl  = s.ytBackendUrl;
@@ -275,6 +289,7 @@ function applySavedSettings(){
   const setOn=(id,on)=>{const b=document.getElementById(id); if(b) b.classList.toggle('on',!!on);};
   setOn('btn-stress',showStress); setOn('btn-inton',showInton); setOn('btn-elision',showElision);
   setOn('btn-rhythm',rhythmSync); setOn('btn-follow',autoFollow);
+  setOn('btn-font-inc',fontScale>1);
 
   /* 速度セレクト */
   const spd=document.getElementById('spd-sel');
@@ -282,9 +297,8 @@ function applySavedSettings(){
   applyPlaybackSpeed();
 
   /* オフセット */
-  const osl=document.getElementById('offset-slider'); if(osl) osl.value=timeOffset;
-  const ovl=document.getElementById('offset-val');
-  if(ovl) ovl.textContent=(timeOffset>=0?'+':'')+timeOffset.toFixed(1)+' s';
+  const osl=document.getElementById('offset-sel');
+  if(osl) osl.value=timeOffset.toFixed(1);
 }
 
 /* ── バックエンド健全性チェック（生成タブ表示時） ── */

@@ -1,4 +1,5 @@
 /* ══ INIT ══ */
+populateOffsetOptions();
 applySavedSettings();
 if(typeof initShadowUI==='function') initShadowUI();
 renderTranscript();
@@ -9,3 +10,5 @@ applyResponsive();
 window.addEventListener('resize',applyResponsive);
 /* 記憶済みの親フォルダ（FSA）を復元 */
 if(typeof restoreSavedFolder==='function') restoreSavedFolder();
+/* タブを閉じる/リロード時、進行中のRunPodジョブをキャンセル（課金停止） */
+window.addEventListener('pagehide', cancelActiveRunpodJob);

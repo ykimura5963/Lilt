@@ -50,6 +50,7 @@ function switchTab(tab,el){
     b.innerHTML=settingsHTML();
     refreshFolderStatus();
     checkBackendHealth();
+    if(ytLlmBackend==='ollama') testOllamaConnection();
   }
 }
 
