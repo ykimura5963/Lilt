@@ -20,6 +20,15 @@
 
 ---
 
+## [1.9.1] - 2026-06-10
+
+### Changed（変更）
+- **Ollama翻訳のCPU負荷を軽減**。`num_ctx` を 4096→**2048** に、翻訳の `num_predict` 上限を縮小（ウィンドウ: `語数×6+512`→`語数×4+256` かつ上限1280／1文: `×6+128`→`×4+96` 上限512）。指示を無視して解説を続ける冗長モデルの「生成暴走」を抑え、CPU実行時の無駄な生成を削減。
+- **既定の翻訳モデルを `qwen3.5:4b`→`qwen3.5:2b` に変更**（バックエンド `OLLAMA_MODEL` とフロントの既定）。より軽量で出力が簡潔、英→日のJSON出力が安定（解析失敗→1文ずつ翻訳への分割フォールバックが起きにくい）。
+  - 補足: AMD内蔵GPU等ではOllama(Windows)がGPUを使えずCPU実行になるため、軽量モデルが有効。既に設定タブで別モデルを選択済みの場合はその選択が優先される。
+
+---
+
 ## [1.9.0] - 2026-06-10
 
 ### Added（追加）
@@ -175,7 +184,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/ykimura5963/Lilt/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/ykimura5963/Lilt/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...v1.7.1
