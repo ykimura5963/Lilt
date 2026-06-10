@@ -20,6 +20,16 @@
 
 ---
 
+## [1.5.0] - 2026-06-10
+
+### Fixed（修正）
+- **RunPodジョブが課金され続ける問題**を修正。従来はRunPodの「完了まで待つ」エンドポイント（`/openai/v1/chat/completions` 相当）を直接呼んでいたため、`job_id` が完了まで取得できず、ブラウザのタブを閉じる／キャンセルボタン／バックエンド終了（Ctrl+C）／SSE切断のいずれが起きてもRunPod側のジョブを止められなかった。
+  - RunPod呼び出しを **`/run`（即座にjob_id取得）→ `/status` ポーリング → 必要に応じ `/cancel`** 方式に変更（バックエンド `/process` ・ `/retranslate`、フロントエンドの発音アノテーション生成すべて）。
+  - 上記いずれの終了タイミングでも `/cancel/{job_id}` を呼び、RunPod側のジョブを中断・課金停止する。
+  - バックエンドにシャットダウンハンドラを追加し、Ctrl+C時に進行中の全RunPodジョブをキャンセル。
+
+---
+
 ## [1.4.1] - 2026-06-07
 
 ### Fixed（修正）
@@ -110,7 +120,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0

@@ -232,7 +232,20 @@ function addModalParaItem(idx, text, state){
 }
 function cancelGeneration(){
   genAbort = true;
+  cancelActiveRunpodJob();
   document.getElementById('gen-modal').style.display='none';
+}
+
+/* ── 進行中のRunPodジョブをキャンセル（タブを閉じる/キャンセルボタン時） ── */
+function cancelActiveRunpodJob(){
+  const job = window._activeRunpodJob;
+  if(!job) return;
+  window._activeRunpodJob = null;
+  fetch(job.base+'/cancel/'+job.jobId, {
+    method: 'POST',
+    headers: {'Authorization':'Bearer '+job.apiKey},
+    keepalive: true
+  }).catch(()=>{});
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 

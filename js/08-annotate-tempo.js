@@ -110,17 +110,15 @@ function extractJsonFromLlm(raw){
   return m ? m[0] : s;
 }
 
-function normalizeRunpodUrl(url){
-  let u = (url || '').trim().replace(/\/+$/, '');
-  u = u.replace(/\/(runsync|run)$/, '');
-  if(u.endsWith('/chat/completions')) return u;
-  if(u.endsWith('/openai/v1')) return u + '/chat/completions';
-  return u + '/openai/v1/chat/completions';
+/* RunPodエンドポイントURLから https://api.runpod.ai/v2/{id} を抽出（/run・/runsync・/openai/v1/... いずれも可） */
+function runpodEndpointBase(url){
+  const m = (url || '').trim().match(/(https?:\/\/[^\/\s]+\/v2\/[^\/\s]+)/);
+  if(!m) throw new Error('RunPod URLからエンドポイントを特定できません: '+url);
+  return m[1];
 }
 
-/* ── OpenAI互換プロバイダ(RunPod/OpenRouter/OpenAI)のURLを解決 ── */
+/* ── OpenAI互換プロバイダ(OpenRouter/OpenAI)のURLを解決 ── */
 function resolveOpenAiCompatUrl(prov){
-  if(prov.provider === 'runpod')     return normalizeRunpodUrl(prov.endpoint);
   if(prov.provider === 'openrouter') return (prov.endpoint||'').trim() || 'https://openrouter.ai/api/v1/chat/completions';
   return (prov.endpoint||'').trim() || 'https://api.openai.com/v1/chat/completions';
 }
@@ -186,13 +184,68 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
       if(!resp.ok) throw new Error('HTTP '+resp.status+': '+(await resp.text().catch(()=>'')).slice(0,80));
       const data = await resp.json();
       rawText2 = data.message?.content || data.response || '';
+    } else if(prov.provider === 'runpod'){
+      /* RunPod: /run でジョブ投入 → /status をポーリング → 切断/タイムアウト時は /cancel */
+      const base    = runpodEndpointBase(prov.endpoint);
+      const model   = prov.model || 'qwen/qwen3.5-9b';
+      const headers = {'Content-Type':'application/json','Authorization':'Bearer '+prov.apiKey};
+      const runResp = await fetch(base+'/run', {
+        method:'POST',
+        signal: controller.signal,
+        headers,
+        body: JSON.stringify({
+          input: {
+            openai_route: '/v1/chat/completions',
+            openai_input: {
+              model, max_tokens:numPredict, temperature:0,
+              chat_template_kwargs:{enable_thinking:false},
+              messages:[
+                {role:'system', content:'You are a pronunciation annotator. Output valid JSON only.'},
+                {role:'user',   content: prompt}
+              ]
+            }
+          }
+        })
+      });
+      if(!runResp.ok){
+        const err = await runResp.json().catch(()=>({}));
+        throw new Error(err.error?.message||'HTTP '+runResp.status);
+      }
+      const job   = await runResp.json();
+      const jobId = job.id;
+      if(!jobId) throw new Error('RunPod /run のレスポンスにjob idがありません');
+
+      window._activeRunpodJob = {base, apiKey: prov.apiKey, jobId};
+      try{
+        while(true){
+          await new Promise(r=>setTimeout(r, 1500));
+          const stResp = await fetch(base+'/status/'+jobId, {signal: controller.signal, headers});
+          if(!stResp.ok) continue;
+          const st = await stResp.json();
+          if(st.status === 'COMPLETED'){
+            const choices = st.output?.choices || [];
+            if(!choices.length) throw new Error('RunPodの出力にchoicesがありません');
+            rawText2 = choices[0].message?.content || '';
+            break;
+          }
+          if(st.status==='FAILED' || st.status==='CANCELLED' || st.status==='TIMED_OUT'){
+            throw new Error('RunPodジョブが'+st.status+'になりました');
+          }
+          /* IN_QUEUE / IN_PROGRESS → 次のポーリングへ継続 */
+        }
+      } catch(e){
+        if(e.name === 'AbortError'){
+          fetch(base+'/cancel/'+jobId, {method:'POST', headers, keepalive:true}).catch(()=>{});
+        }
+        throw e;
+      } finally {
+        window._activeRunpodJob = null;
+      }
     } else {
-      /* OpenAI互換 (RunPod / OpenRouter / OpenAI) — バックエンドの _translate_chat と揃える */
+      /* OpenAI互換 (OpenRouter / OpenAI) — バックエンドの _translate_chat と揃える */
       const url   = resolveOpenAiCompatUrl(prov);
-      const model = prov.model || (prov.provider === 'runpod' ? 'qwen/qwen3.5-9b' : 'gpt-4o-mini');
-      const extra = prov.provider === 'runpod'     ? {chat_template_kwargs:{enable_thinking:false}}
-                  : prov.provider === 'openrouter' ? {reasoning:{enabled:false}}
-                  : null;
+      const model = prov.model || 'gpt-4o-mini';
+      const extra = prov.provider === 'openrouter' ? {reasoning:{enabled:false}} : null;
       const headers = {'Content-Type':'application/json','Authorization':'Bearer '+prov.apiKey};
       if(url.includes('openrouter.ai')){
         headers['HTTP-Referer'] = 'http://localhost:8080';

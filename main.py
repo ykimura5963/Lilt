@@ -5,9 +5,11 @@ import shutil
 import asyncio
 import logging
 import datetime
+import threading
+import time
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -19,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.4.1"
+LILT_VERSION = "1.5.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -50,6 +52,11 @@ else:
         "⚠ ffmpeg が見つかりません。一部の動画でダウンロード/マージに失敗する場合があります。"
         " https://ffmpeg.org/download.html からインストールし PATH を通してください。"
     )
+
+# RunPod: 進行中ジョブの追跡（job_id -> (base_url, api_key)）。
+# クライアント切断やサーバー終了時に /cancel を呼んで課金を止めるために使用。
+_active_runpod_jobs: dict = {}
+_active_runpod_jobs_lock = threading.Lock()
 
 
 # ── Models ──────────────────────────────────────────────────────────────────
@@ -329,7 +336,7 @@ def _simple_chunk_transcript(transcript: list) -> list:
 
 def _translate_window(
     window: list, provider: str, ollama_url: str, model: str,
-    endpoint: str, api_key: str,
+    endpoint: str, api_key: str, cancel_event: Optional[threading.Event] = None,
 ) -> list:
     """1ウィンドウ分の英文を翻訳し translations(list[str]) を返す。失敗時は例外を送出。
     event_stream から executor 経由でウィンドウごとに呼び出す（進捗送信のため）。"""
@@ -342,7 +349,7 @@ def _translate_window(
     raw = _translate_chat(
         messages, num_predict,
         provider=provider, ollama_url=ollama_url, model=model,
-        endpoint=endpoint, api_key=api_key,
+        endpoint=endpoint, api_key=api_key, cancel_event=cancel_event,
     )
     try:
         return _parse_translations(raw)
@@ -352,7 +359,7 @@ def _translate_window(
 
 
 def _translate_one(en: str, provider: str, ollama_url: str, model: str,
-                   endpoint: str, api_key: str) -> str:
+                   endpoint: str, api_key: str, cancel_event: Optional[threading.Event] = None) -> str:
     """1文だけを翻訳（JSONを使わず、訳文そのものを返す堅牢フォールバック）。"""
     messages = [
         {"role": "system", "content":
@@ -364,7 +371,7 @@ def _translate_one(en: str, provider: str, ollama_url: str, model: str,
     raw = _translate_chat(
         messages, num_predict,
         provider=provider, ollama_url=ollama_url, model=model,
-        endpoint=endpoint, api_key=api_key,
+        endpoint=endpoint, api_key=api_key, cancel_event=cancel_event,
     )
     s = re.sub(r"<think>[\s\S]*?</think>", "", raw or "", flags=re.IGNORECASE).strip()
     s = re.sub(r"```[a-z]*\s*|```", "", s).strip()
@@ -372,23 +379,23 @@ def _translate_one(en: str, provider: str, ollama_url: str, model: str,
 
 
 def _translate_window_safe(window: list, provider: str, ollama_url: str, model: str,
-                           endpoint: str, api_key: str) -> list:
+                           endpoint: str, api_key: str, cancel_event: Optional[threading.Event] = None) -> list:
     """バッチ翻訳。解析失敗・件数不足なら二分割で再試行し、最終的に1文ずつ訳す。
-    タイムアウト/接続エラーは上位（リトライ）へ送出する。"""
+    タイムアウト/接続エラー/キャンセルは上位（リトライ）へ送出する。"""
     n = len(window)
     if n == 0:
         return []
     if n == 1:
         try:
-            return [_translate_one(window[0]["en"], provider, ollama_url, model, endpoint, api_key)]
-        except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError):
+            return [_translate_one(window[0]["en"], provider, ollama_url, model, endpoint, api_key, cancel_event)]
+        except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError, RunPodCancelled):
             raise
         except Exception as e:
             logger.warning(f"1文翻訳に失敗（英語のまま）: {e}")
             return [""]
     try:
-        res = _translate_window(window, provider, ollama_url, model, endpoint, api_key)
-    except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError):
+        res = _translate_window(window, provider, ollama_url, model, endpoint, api_key, cancel_event)
+    except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError, RunPodCancelled):
         raise
     except Exception:
         res = None
@@ -396,8 +403,8 @@ def _translate_window_safe(window: list, provider: str, ollama_url: str, model: 
         return res[:n]
     # 失敗 or 件数不足 → 二分割
     mid = n // 2
-    left  = _translate_window_safe(window[:mid], provider, ollama_url, model, endpoint, api_key)
-    right = _translate_window_safe(window[mid:], provider, ollama_url, model, endpoint, api_key)
+    left  = _translate_window_safe(window[:mid], provider, ollama_url, model, endpoint, api_key, cancel_event)
+    right = _translate_window_safe(window[mid:], provider, ollama_url, model, endpoint, api_key, cancel_event)
     return left + right
 
 
@@ -531,7 +538,7 @@ def _openai_compatible_chat(
     messages: list, url: str, api_key: str, model: str,
     max_tokens: int, extra_body: Optional[dict] = None,
 ) -> str:
-    """OpenAI互換 /chat/completions を呼ぶ（RunPod vLLM / OpenRouter / OpenAI 共通）。"""
+    """OpenAI互換 /chat/completions を呼ぶ（OpenRouter / OpenAI 共通）。"""
     payload = {
         "model":       model,
         "messages":    messages,
@@ -555,10 +562,130 @@ def _openai_compatible_chat(
     return choices[0]["message"]["content"]
 
 
+# ── RunPod ジョブAPI（/run → /status ポーリング → /cancel）──────────────────
+# OpenAI互換 /openai/v1/chat/completions は完了までjob_idが手に入らず、
+# 接続断やアプリ終了時に課金中ジョブを止められない。/run でjob_idを即取得し、
+# クライアント切断・サーバー終了時は /cancel で確実に課金を止める。
+
+RUNPOD_POLL_INTERVAL = 1.5  # /status ポーリング間隔（秒）
+
+
+class RunPodCancelled(Exception):
+    """クライアント切断等によりRunPodジョブをキャンセルしたことを示す例外。"""
+
+
+def _runpod_base_url(url: str) -> str:
+    """RunPodエンドポイントURLから https://api.runpod.ai/v2/{id} を抽出。
+    /run・/runsync・/openai/v1/chat/completions 等どの形式でも受理。"""
+    m = re.search(r"(https?://[^/\s]+/v2/[^/\s]+)", (url or "").strip())
+    if not m:
+        raise ValueError(f"RunPod URLからエンドポイントを特定できません: {url}")
+    return m.group(1)
+
+
+def _runpod_cancel(base: str, api_key: str, job_id: str) -> None:
+    """RunPodジョブをベストエフォートでキャンセル（失敗してもログのみ）。"""
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        resp = http_requests.post(f"{base}/cancel/{job_id}", headers=headers, timeout=10)
+        logger.info(f"RunPodジョブ {job_id} キャンセル要求: HTTP {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"RunPodジョブ {job_id} のキャンセルに失敗: {e}")
+
+
+def _register_runpod_job(base: str, api_key: str, job_id: str) -> None:
+    with _active_runpod_jobs_lock:
+        _active_runpod_jobs[job_id] = (base, api_key)
+
+
+def _unregister_runpod_job(job_id: str) -> None:
+    with _active_runpod_jobs_lock:
+        _active_runpod_jobs.pop(job_id, None)
+
+
+def _runpod_chat(
+    messages: list, base: str, api_key: str, model: str,
+    max_tokens: int, extra_body: Optional[dict],
+    cancel_event: threading.Event, timeout: float = 300,
+) -> str:
+    """RunPod /run でジョブ投入 → /status をポーリングして結果を取得。
+    cancel_event がセットされる、またはタイムアウトすると /cancel を呼んで中断する。"""
+    openai_input = {
+        "model":       model,
+        "messages":    messages,
+        "temperature": 0,
+        "max_tokens":  max_tokens,
+    }
+    if extra_body:
+        openai_input.update(extra_body)
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    body = {"input": {"openai_route": "/v1/chat/completions", "openai_input": openai_input}}
+
+    resp = http_requests.post(f"{base}/run", headers=headers, json=body, timeout=30)
+    if not resp.ok:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+    job = resp.json()
+    job_id = job.get("id")
+    if not job_id:
+        raise RuntimeError(f"RunPod /run のレスポンスにjob idがありません: {str(job)[:200]}")
+
+    _register_runpod_job(base, api_key, job_id)
+    try:
+        deadline = time.monotonic() + timeout
+        poll_errors = 0
+        while True:
+            if cancel_event.is_set():
+                _runpod_cancel(base, api_key, job_id)
+                raise RunPodCancelled(f"RunPodジョブ {job_id} をキャンセルしました（クライアント切断）")
+            if time.monotonic() > deadline:
+                _runpod_cancel(base, api_key, job_id)
+                raise http_requests.exceptions.Timeout(f"RunPodジョブ {job_id} が{timeout}秒でタイムアウトしました")
+
+            time.sleep(RUNPOD_POLL_INTERVAL)
+
+            try:
+                r = http_requests.get(f"{base}/status/{job_id}", headers=headers, timeout=15)
+                r.raise_for_status()
+                poll_errors = 0
+            except (http_requests.exceptions.Timeout, http_requests.exceptions.ConnectionError):
+                poll_errors += 1
+                if poll_errors >= 3:
+                    raise
+                continue
+
+            st = r.json()
+            status = st.get("status")
+            if status == "COMPLETED":
+                output = st.get("output") or {}
+                choices = output.get("choices", [])
+                if not choices:
+                    raise RuntimeError(f"RunPodの出力にchoicesがありません: {str(output)[:300]}")
+                return choices[0]["message"]["content"]
+            if status in ("FAILED", "CANCELLED", "TIMED_OUT"):
+                raise RuntimeError(f"RunPodジョブが{status}になりました: {str(st.get('error') or st)[:200]}")
+            # IN_QUEUE / IN_PROGRESS → 次のポーリングへ継続
+    finally:
+        _unregister_runpod_job(job_id)
+
+
+async def _await_with_disconnect(http_request: Request, fut, cancel_event: threading.Event) -> bool:
+    """fut の完了を待つ。クライアント切断を検知したら cancel_event をセットして True を返す
+    （fut は未完了のまま残る）。fut が先に完了すれば False を返す。"""
+    while True:
+        done, _pending = await asyncio.wait({fut}, timeout=1.0)
+        if done:
+            return False
+        if await http_request.is_disconnected():
+            cancel_event.set()
+            fut.add_done_callback(lambda f: f.exception())
+            return True
+
+
 def _translate_chat(
     messages: list, num_predict: int, *,
     provider: str, ollama_url: str, model: str,
     endpoint: str, api_key: str,
+    cancel_event: Optional[threading.Event] = None,
 ) -> str:
     """翻訳ステージのプロバイダ振り分け。"""
     provider = (provider or "ollama").lower()
@@ -566,10 +693,13 @@ def _translate_chat(
         return _ollama_chat(messages, ollama_url, model, num_predict)
 
     if provider == "runpod":
-        url   = _normalize_runpod_url(endpoint)
+        base  = _runpod_base_url(endpoint)
         # Qwen3系の thinking を無効化（vLLM拡張）— 速度・トークン節約
         extra = {"chat_template_kwargs": {"enable_thinking": False}}
-    elif provider == "openrouter":
+        return _runpod_chat(messages, base, api_key, model, num_predict, extra,
+                             cancel_event or threading.Event())
+
+    if provider == "openrouter":
         url   = endpoint.strip() if endpoint.strip() else OPENROUTER_DEFAULT_URL
         extra = {"reasoning": {"enabled": False}}   # OpenRouter統一パラメータ（非対応モデルは無視）
     else:  # openai（汎用OpenAI互換）
@@ -762,7 +892,7 @@ async def delete_project(video_id: str):
 
 
 @app.post("/process")
-async def process_youtube(request: ProcessRequest):
+async def process_youtube(request: ProcessRequest, http_request: Request):
     try:
         video_id = extract_video_id(request.url)
     except ValueError as e:
@@ -922,12 +1052,17 @@ async def process_youtube(request: ProcessRequest):
             pct = 25 + int((wi / max(len(windows), 1)) * 58)   # 25 → 83%
             yield send({"type": "progress", "stage": "llm", "pct": pct,
                         "msg": f"日本語訳を生成中（{_llm_label}）... {wi+1}/{len(windows)}"})
+            cancel_event = threading.Event()
+            fut = loop.run_in_executor(
+                None, _translate_window, window,
+                _provider, request.ollama_url, translate_model,
+                request.translate_endpoint, request.translate_api_key, cancel_event,
+            )
+            if await _await_with_disconnect(http_request, fut, cancel_event):
+                logger.info(f"クライアント切断を検知（Window {wi+1}/{len(windows)}）。RunPodジョブのキャンセルを試行し処理を中断します。")
+                return
             try:
-                translations = await loop.run_in_executor(
-                    None, _translate_window, window,
-                    _provider, request.ollama_url, translate_model,
-                    request.translate_endpoint, request.translate_api_key,
-                )
+                translations = fut.result()
                 for p, ja in zip(window, translations):
                     p["ja"] = ja
                 logger.info(f"Window {wi+1}/{len(windows)}: {len(translations)} 件翻訳 OK")
@@ -995,7 +1130,7 @@ async def process_youtube(request: ProcessRequest):
 
 
 @app.post("/retranslate/{video_id}")
-async def retranslate(video_id: str, request: RetranslateRequest):
+async def retranslate(video_id: str, request: RetranslateRequest, http_request: Request):
     """既存 data.json の英文を再翻訳して ja を補完し、data.json / data.md を更新する。
     動画DL・字幕取得・発音アノテーションはやり直さない（既存の語タイミング等は保持）。"""
     if not re.match(r"^[A-Za-z0-9_\-]+$", video_id):
@@ -1053,12 +1188,17 @@ async def retranslate(video_id: str, request: RetranslateRequest):
             ok, last_err = False, None
             # RunPod のコールドスタートを乗り越えるため、タイムアウト/接続失敗は数回リトライ
             for attempt in range(3):
+                cancel_event = threading.Event()
+                fut = loop.run_in_executor(
+                    None, _translate_window_safe, window,
+                    provider, request.ollama_url, model,
+                    request.translate_endpoint, request.translate_api_key, cancel_event,
+                )
+                if await _await_with_disconnect(http_request, fut, cancel_event):
+                    logger.info(f"クライアント切断を検知（Window {wi+1}/{len(windows)}）。RunPodジョブのキャンセルを試行し処理を中断します。")
+                    return
                 try:
-                    translations = await loop.run_in_executor(
-                        None, _translate_window_safe, window,
-                        provider, request.ollama_url, model,
-                        request.translate_endpoint, request.translate_api_key,
-                    )
+                    translations = fut.result()
                     for p, ja in zip(window, translations):
                         if ja: p["ja"] = ja
                     filled += sum(1 for ja in translations if ja)
@@ -1087,6 +1227,16 @@ async def retranslate(video_id: str, request: RetranslateRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.on_event("shutdown")
+async def _cancel_active_runpod_jobs_on_shutdown():
+    """サーバー終了時、進行中のRunPodジョブをキャンセルして課金を止める。"""
+    with _active_runpod_jobs_lock:
+        jobs = list(_active_runpod_jobs.items())
+    for job_id, (base, api_key) in jobs:
+        logger.info(f"シャットダウン: RunPodジョブ {job_id} をキャンセルします")
+        _runpod_cancel(base, api_key, job_id)
 
 
 @app.get("/health")
