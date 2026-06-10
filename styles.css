@@ -334,6 +334,8 @@ header{
 .gen-btn:disabled{opacity:.4;cursor:not-allowed}
 .gen-btn.danger{border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.1);color:var(--a2)}
 .gen-btn.danger:hover{background:rgba(78,173,255,.18)}
+.gen-btn.cancel{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.08);color:rgba(248,113,113,.9)}
+.gen-btn.cancel:hover{background:rgba(248,113,113,.18)}
 .gen-prog-wrap{margin-top:.625rem;display:none}
 .gen-prog-bg{height:3px;background:var(--bd2);border-radius:2px;overflow:hidden}
 .gen-prog-fill{height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s}
@@ -359,6 +361,8 @@ header{
 .yt-proj-load:hover{background:rgba(78,173,255,.18)}
 .yt-proj-del{font-size:12px;padding:2px 5px;border-radius:4px;cursor:pointer;border:.5px solid rgba(248,113,113,.35);background:rgba(248,113,113,.07);color:rgba(248,113,113,.8);flex-shrink:0;line-height:1}
 .yt-proj-del:hover{background:rgba(248,113,113,.2);color:#f87171}
+.yt-proj-cancel{font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;border:.5px solid rgba(248,113,113,.35);background:rgba(248,113,113,.07);color:rgba(248,113,113,.85);flex-shrink:0}
+.yt-proj-cancel:hover{background:rgba(248,113,113,.2);color:#f87171}
 .yt-proj-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .yt-prog-wrap{margin-top:.625rem;background:var(--bd2);border-radius:2px;overflow:hidden;height:3px;display:none}
 .yt-prog-fill{height:100%;background:var(--a2);border-radius:2px;width:0%;transition:width .4s}

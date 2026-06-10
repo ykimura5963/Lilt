@@ -154,6 +154,12 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
   /* ── タイムアウト付きfetch (240秒) ── */
   const controller = new AbortController();
   const timeoutId  = setTimeout(()=> controller.abort(), 240000);
+  /* キャンセルボタン押下（genAbortController）で進行中のリクエストも即座に中断する */
+  const onCancel = ()=> controller.abort();
+  if(genAbortController){
+    if(genAbortController.signal.aborted) controller.abort();
+    else genAbortController.signal.addEventListener('abort', onCancel, {once:true});
+  }
   /* 経過時間を表示 */
   const startedAt  = Date.now();
   const timerDisp  = setInterval(()=>{
@@ -273,6 +279,7 @@ Example word: {"t":"to","ws":1.2,"stress":"w","inton":null,"elision":true,"note"
   } finally {
     clearTimeout(timeoutId);
     clearInterval(timerDisp);
+    if(genAbortController) genAbortController.signal.removeEventListener('abort', onCancel);
   }
 
   const clean = extractJsonFromLlm(rawText2);

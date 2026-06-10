@@ -232,6 +232,7 @@ function addModalParaItem(idx, text, state){
 }
 function cancelGeneration(){
   genAbort = true;
+  if(genAbortController) genAbortController.abort();
   cancelActiveRunpodJob();
   document.getElementById('gen-modal').style.display='none';
 }

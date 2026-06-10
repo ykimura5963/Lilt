@@ -12,6 +12,7 @@ async function runGeneration(){
   const speed = document.getElementById('gen-speed')?.value || 'fast';
 
   genAbort = false;
+  genAbortController = new AbortController();
   document.getElementById('gen-modal').style.display='flex';
   document.getElementById('modal-para-list').innerHTML='';
   setModalStatus('段落を解析中...',0);
@@ -105,6 +106,7 @@ async function regenerateAnnotationsOnly(){
   const src = PARAS.map(p=>({en:p.en, ja:p.ja, start:p.start, end:p.end}));
 
   genAbort = false;
+  genAbortController = new AbortController();
   document.getElementById('gen-modal').style.display='flex';
   document.getElementById('modal-para-list').innerHTML='';
   setModalStatus(`既存の${src.length}チャンクの発音アノテーションを再生成します...`, 5);

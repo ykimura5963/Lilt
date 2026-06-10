@@ -14,11 +14,14 @@
 
 let genOllamaUrl = 'http://localhost:11434';
 let genAbort    = false;
+let genAbortController = null;  /* アノテーション生成: 進行中リクエストの即時キャンセル用 */
 let fsaDirHandle  = null;  /* 保存先フォルダハンドル */
 let currentBase   = '';    /* 動画ファイルのベース名 */
 
 /* ── YouTube自動処理 状態変数 ── */
 let ytAutoUrl     = '';
+let ytAutoController = null;       /* 全自動処理: 進行中リクエストの即時キャンセル用 */
+let retranslateControllers = {};   /* 日本語訳再生成: video_id -> AbortController */
 let ytBackendUrl  = 'http://localhost:8000';
 let ytOllamaModel = 'qwen3.5:4b';
 /* 翻訳LLMプロバイダ: 'ollama' | 'runpod' | 'openrouter' | 'openai' */
@@ -54,7 +57,7 @@ async function loadYouTubeProjects(){
         <span class="yt-proj-name" title="${p.video_id}">${p.title||p.video_id}</span>
         <div style="display:flex;gap:4px;flex-shrink:0">
           ${p.has_data ? `<button class="yt-proj-load" onclick="loadYouTubeProject('${p.video_id}')">読込</button>` : '<span style="font-size:10px;color:var(--muted);padding:2px 4px">処理中</span>'}
-          ${p.has_data ? `<button class="yt-proj-load" onclick="retranslateProject('${p.video_id}')" title="日本語訳を再生成（DL・字幕取得なし）">🌐訳</button>` : ''}
+          ${p.has_data ? `<button class="yt-proj-load" id="retrans-btn-${p.video_id}" onclick="retranslateProject('${p.video_id}')" title="日本語訳を再生成（DL・字幕取得なし）">🌐訳</button>` : ''}
           <button class="yt-proj-del" onclick="deleteYouTubeProject('${p.video_id}')" title="削除">🗑</button>
         </div>
       </div>`).join('');
@@ -117,6 +120,8 @@ async function loadYouTubeProject(videoId){
 
 /* ── 既存プロジェクトの日本語訳のみ再生成（DL・字幕取得なし／ja のみ更新） ── */
 async function retranslateProject(videoId){
+  if(retranslateControllers[videoId]) return;   /* 既に実行中 */
+
   const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
   /* 一覧上のプロバイダ選択を優先（無ければ共通設定 ytLlmBackend） */
   const provName = document.getElementById('retrans-prov')?.value || ytLlmBackend || 'ollama';
@@ -129,46 +134,79 @@ async function retranslateProject(videoId){
   }
   if(!confirm(`「${videoId}」の日本語訳を【${prov.provider}${prov.model?' / '+prov.model:''}】で再生成します。\n英文・タイミングはそのままで、日本語訳(ja)のみ更新します。\n\nよろしいですか？`)) return;
 
-  let resp;
-  try{
-    resp = await fetch(`${bkUrl}/retranslate/${videoId}`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        translate_provider: prov.provider,
-        translate_model:    prov.model,
-        translate_endpoint: prov.endpoint,
-        translate_api_key:  prov.apiKey,
-        ollama_url:         genOllamaUrl || 'http://localhost:11434',
-      })
-    });
-    if(!resp.ok){ const e = await resp.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+resp.status); }
-  }catch(err){ showToast('再翻訳の開始に失敗: '+err.message, true, 5000); return; }
+  const btn = document.getElementById(`retrans-btn-${videoId}`);
+  const controller = new AbortController();
+  retranslateControllers[videoId] = controller;
+  if(btn){
+    btn.textContent = '■';
+    btn.title = '日本語訳の再生成をキャンセル';
+    btn.className = 'yt-proj-cancel';
+    btn.onclick = ()=>cancelRetranslateProject(videoId);
+  }
 
-  const reader = resp.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
   try{
-    while(true){
-      const {done, value} = await reader.read();
-      if(done) break;
-      buf += dec.decode(value, {stream:true});
-      const lines = buf.split('\n'); buf = lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data: ')) continue;
-        let evt; try{ evt = JSON.parse(line.slice(6)); }catch(e){ continue; }
-        if(evt.type==='progress' || evt.type==='warning'){
-          showToast('🌐 '+(evt.msg||''), evt.type==='warning', 8000);
-        }else if(evt.type==='error'){
-          showToast('再翻訳エラー: '+evt.msg, true, 6000);
-        }else if(evt.type==='done'){
-          showToast('✓ '+(evt.msg||'再翻訳が完了しました'), false, 5000);
-          /* 現在表示中のプロジェクトなら再読込して訳を反映 */
-          if(typeof currentBase!=='undefined' && currentBase===videoId){ loadYouTubeProject(videoId); }
+    let resp;
+    try{
+      resp = await fetch(`${bkUrl}/retranslate/${videoId}`, {
+        method:'POST',
+        signal: controller.signal,
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          translate_provider: prov.provider,
+          translate_model:    prov.model,
+          translate_endpoint: prov.endpoint,
+          translate_api_key:  prov.apiKey,
+          ollama_url:         genOllamaUrl || 'http://localhost:11434',
+        })
+      });
+      if(!resp.ok){ const e = await resp.json().catch(()=>({})); throw new Error(e.detail || 'HTTP '+resp.status); }
+    }catch(err){
+      if(err.name==='AbortError'){ showToast('🌐 日本語訳の再生成をキャンセルしました', false, 3000); return; }
+      showToast('再翻訳の開始に失敗: '+err.message, true, 5000); return;
+    }
+
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    try{
+      while(true){
+        const {done, value} = await reader.read();
+        if(done) break;
+        buf += dec.decode(value, {stream:true});
+        const lines = buf.split('\n'); buf = lines.pop();
+        for(const line of lines){
+          if(!line.startsWith('data: ')) continue;
+          let evt; try{ evt = JSON.parse(line.slice(6)); }catch(e){ continue; }
+          if(evt.type==='progress' || evt.type==='warning'){
+            showToast('🌐 '+(evt.msg||''), evt.type==='warning', 8000);
+          }else if(evt.type==='error'){
+            showToast('再翻訳エラー: '+evt.msg, true, 6000);
+          }else if(evt.type==='done'){
+            showToast('✓ '+(evt.msg||'再翻訳が完了しました'), false, 5000);
+            /* 現在表示中のプロジェクトなら再読込して訳を反映 */
+            if(typeof currentBase!=='undefined' && currentBase===videoId){ loadYouTubeProject(videoId); }
+          }
         }
       }
+    }catch(err){
+      if(err.name==='AbortError'){ showToast('🌐 日本語訳の再生成をキャンセルしました', false, 3000); }
+      else { showToast('再翻訳ストリームエラー: '+err.message, true, 5000); }
     }
-  }catch(err){ showToast('再翻訳ストリームエラー: '+err.message, true, 5000); }
+  } finally {
+    delete retranslateControllers[videoId];
+    if(btn){
+      btn.textContent = '🌐訳';
+      btn.title = '日本語訳を再生成（DL・字幕取得なし）';
+      btn.className = 'yt-proj-load';
+      btn.onclick = ()=>retranslateProject(videoId);
+    }
+  }
+}
+
+/* ── 進行中の日本語訳再生成をキャンセル ── */
+function cancelRetranslateProject(videoId){
+  const controller = retranslateControllers[videoId];
+  if(controller) controller.abort();
 }
 
 /* ── 指定プロバイダの設定を解決（DOM入力 → 永続化変数の順でフォールバック） ── */
@@ -220,20 +258,25 @@ async function runYouTubeAutoProcess(overrideProvider = null){
   ytBackendUrl = bkUrl;
   persistGenSettings();
 
-  const btn     = document.getElementById('yt-auto-btn');
-  const progWrp = document.getElementById('yt-prog-wrap');
-  const progFil = document.getElementById('yt-prog-fill');
-  const statusEl= document.getElementById('yt-status-text');
+  const btn       = document.getElementById('yt-auto-btn');
+  const cancelBtn = document.getElementById('yt-auto-cancel-btn');
+  const progWrp   = document.getElementById('yt-prog-wrap');
+  const progFil   = document.getElementById('yt-prog-fill');
+  const statusEl  = document.getElementById('yt-status-text');
 
-  if(btn)     btn.disabled = true;
+  if(btn)       btn.disabled = true;
+  if(cancelBtn) cancelBtn.style.display = '';
   if(progWrp){ progWrp.style.display='block'; }
   if(progFil) progFil.style.width='0%';
   if(statusEl){ statusEl.textContent=`処理を開始しています（${prov.provider}）...`; statusEl.className='yt-status'; }
+
+  ytAutoController = new AbortController();
 
   let response;
   try{
     response = await fetch(`${bkUrl}/process`, {
       method:'POST',
+      signal: ytAutoController.signal,
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         url,
@@ -249,7 +292,13 @@ async function runYouTubeAutoProcess(overrideProvider = null){
       throw new Error(errData.detail || 'HTTP '+response.status);
     }
   }catch(err){
-    if(btn) btn.disabled=false;
+    if(err.name==='AbortError'){
+      if(statusEl){ statusEl.textContent='キャンセルしました'; statusEl.className='yt-status'; }
+      showToast('自動処理をキャンセルしました', false, 3000);
+      resetYtAutoUI();
+      return;
+    }
+    resetYtAutoUI();
     if(!overrideProvider && prov.provider !== 'ollama'){
       const go = confirm(
         `【${prov.provider}】への接続に失敗しました。\n\n` +
@@ -281,10 +330,27 @@ async function runYouTubeAutoProcess(overrideProvider = null){
       }
     }
   }catch(err){
-    if(statusEl){ statusEl.textContent='ストリームエラー: '+err.message; statusEl.className='yt-status err'; }
+    if(err.name==='AbortError'){
+      if(statusEl){ statusEl.textContent='キャンセルしました'; statusEl.className='yt-status'; }
+      showToast('自動処理をキャンセルしました', false, 3000);
+    } else if(statusEl){ statusEl.textContent='ストリームエラー: '+err.message; statusEl.className='yt-status err'; }
   }finally{
-    if(btn) btn.disabled=false;
+    resetYtAutoUI();
   }
+}
+
+/* ── 全自動処理のキャンセル ── */
+function cancelYouTubeAutoProcess(){
+  if(ytAutoController) ytAutoController.abort();
+}
+
+/* ── 全自動処理ボタンの状態をリセット ── */
+function resetYtAutoUI(){
+  const btn       = document.getElementById('yt-auto-btn');
+  const cancelBtn = document.getElementById('yt-auto-cancel-btn');
+  if(btn)       btn.disabled = false;
+  if(cancelBtn) cancelBtn.style.display = 'none';
+  ytAutoController = null;
 }
 
 /* ── SSEイベントハンドラ ── */
@@ -339,10 +405,15 @@ function generateHTML(){
       oninput="ytAutoUrl=this.value">
   </div>
   <div class="gen-status" id="backend-health" style="margin-bottom:6px">接続確認中...</div>
-  <button class="gen-btn" id="yt-auto-btn" onclick="runYouTubeAutoProcess()"
-    style="border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.1);color:var(--a2)">
-    ▶ 自動処理開始
-  </button>
+  <div class="gen-row">
+    <button class="gen-btn" id="yt-auto-btn" onclick="runYouTubeAutoProcess()"
+      style="border-color:rgba(78,173,255,.4);background:rgba(78,173,255,.1);color:var(--a2)">
+      ▶ 自動処理開始
+    </button>
+    <button class="gen-btn cancel" id="yt-auto-cancel-btn" onclick="cancelYouTubeAutoProcess()" style="display:none">
+      ■ キャンセル
+    </button>
+  </div>
   <div class="yt-prog-wrap" id="yt-prog-wrap"><div class="yt-prog-fill" id="yt-prog-fill"></div></div>
   <div class="yt-status" id="yt-status-text"></div>
   <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:6px">バックエンドURL・翻訳/注釈モデルは「設定」タブで変更できます</div>
@@ -449,12 +520,13 @@ function settingsHTML(){
     <div id="yt-prov-ollama" style="${ytLlmBackend==='ollama'?'':'display:none'}">
       <div class="gen-label" style="margin-top:6px">Ollama URL</div>
       <input class="gen-input" id="yt-ollama-url" value="${genOllamaUrl}"
-        oninput="genOllamaUrl=this.value" onchange="persistGenSettings()" placeholder="http://localhost:11434">
-      <div class="gen-label" style="margin-top:6px">モデル（Ollamaタグ）</div>
-      <input class="gen-input" id="yt-ollama-model" value="${ytOllamaModel}"
-        oninput="ytOllamaModel=this.value" onchange="persistGenSettings()" placeholder="例: qwen3.5:4b">
+        oninput="genOllamaUrl=this.value" onchange="persistGenSettings();testOllamaConnection()" placeholder="http://localhost:11434">
+      <div class="gen-label" style="margin-top:6px">モデル（インストール済みから選択）</div>
+      <select class="gen-input" id="yt-ollama-model" onchange="ytOllamaModel=this.value;persistGenSettings()">
+        <option value="${ytOllamaModel}">${ytOllamaModel || '(モデル未選択)'}</option>
+      </select>
       <div class="gen-row" style="margin-top:8px">
-        <button class="gen-btn danger" onclick="testOllamaConnection()">⚡ 接続テスト</button>
+        <button class="gen-btn danger" onclick="testOllamaConnection()">⚡ 接続テスト / モデル一覧取得</button>
       </div>
       <div class="gen-status" id="ollama-test-status" style="margin-top:4px"></div>
       <div style="margin-top:10px;padding:10px;background:rgba(245,200,66,.06);border:.5px solid rgba(245,200,66,.2);border-radius:6px;font-size:11px;font-family:var(--mono);line-height:2;color:var(--muted)">
@@ -541,28 +613,36 @@ function onYtLlmBackendChange(val){
     if(sec) sec.style.display = (p === val) ? '' : 'none';
   });
   persistGenSettings();
+  if(val==='ollama') testOllamaConnection();
 }
 
-/* ── Ollama接続テスト ── */
+/* ── Ollama接続テスト＋インストール済みモデル一覧の取得 ── */
 async function testOllamaConnection(){
   const statusEl = document.getElementById('ollama-test-status');
+  const sel = document.getElementById('yt-ollama-model');
   const url = (genOllamaUrl||'http://localhost:11434').replace(/\/$/,'');
   if(statusEl){ statusEl.textContent='テスト中...'; statusEl.className='gen-status'; }
   try{
-    /* GET /api/tags でモデル一覧取得 → 接続確認 */
+    /* GET /api/tags でインストール済みモデル一覧を取得 → 接続確認 */
     const resp = await fetch(url+'/api/tags', {method:'GET'});
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const data = await resp.json();
-    const models = (data.models||[]).map(m=>m.name).join(', ') || '(モデルなし)';
+    const models = (data.models||[]).map(m=>m.name);
     if(statusEl){
-      statusEl.textContent = '✓ 接続OK — モデル: '+models;
+      statusEl.textContent = models.length
+        ? `✓ 接続OK — ${models.length}個のモデルを取得しました`
+        : '✓ 接続OK（インストール済みモデルがありません）';
       statusEl.className = 'gen-status ok';
     }
-    /* モデル名入力欄に最初のモデルをセット（空の場合） */
-    const mi = document.getElementById('yt-ollama-model');
-    if(mi && !mi.value && data.models?.length){
-      mi.value = data.models[0].name;
-      ytOllamaModel = data.models[0].name;
+    /* モデル選択肢をインストール済み一覧で更新（現在の選択は可能なら維持） */
+    if(sel && models.length){
+      const current = ytOllamaModel;
+      sel.innerHTML = models.map(m=>`<option value="${m}"${m===current?' selected':''}>${m}</option>`).join('');
+      if(!models.includes(current)){
+        sel.value = models[0];
+        ytOllamaModel = models[0];
+        persistGenSettings();
+      }
     }
   } catch(err){
     if(statusEl){
