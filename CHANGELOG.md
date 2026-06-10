@@ -20,6 +20,27 @@
 
 ---
 
+## [1.9.0] - 2026-06-10
+
+### Added（追加）
+- **動画ライブラリ**：ファイルバーの「▶ 動画を開く」を**ライブラリ一覧**に変更。バックエンドの `projects/` 配下、または任意の親フォルダ（モーダル上部で指定）の各動画フォルダ（動画・`data.json`・`data.md`）を一覧から**一括読込**できる。従来のローカルファイル選択は「📁 ファイルから」へ移動して存続。
+  - バックエンド `GET /projects` に `root` クエリを追加（任意フォルダ走査・トラバーサル検証付き）。表示名は `title.txt` →`data.json` の `contentBase`→フォルダ名 の順で決定。レスポンスに実 `video_file` 名を追加。
+  - 任意ルート配信用に `GET /library-file`（トラバーサル対策付き）を新設。YouTube全自動処理時に `title.txt` を保存するように。
+- 動画下のスライダーバーに**再生(▶)・停止(⏸)ボタン**を追加（ローカル動画／YouTube両対応）。
+
+### Changed（変更）
+- **動画上のネイティブ操作UI（標準コントロール）を非表示**。自作のスライダー・再生/停止と重複していたため。動画クリックで再生/一時停止をトグル可能に。YouTube埋め込みも `controls=0`。
+- **同期オフセット**を **1.0秒刻み・-10.0〜+10.0** に変更（従来は 0.1刻み・-15〜+15）。
+- **フォントサイズ**：「A−」ボタンを廃止し、「A＋」クリックで 1.0×⇔1.2× をトグルする方式に変更。
+- 各チャンクの「リピート🔁／録音🎤／練習🎧」ボタンを、スマホでも押しやすいよう**大きめ**に変更。
+- LILT ロゴを **約1.4倍**に拡大。
+
+### Removed（削除）
+- ファイルバーの「YT」チェックボックス（`chk-yt`）を削除。
+- 設定タブの「⚠ Failed to fetch の原因と対処」ヘルプブロック（および未使用化した `copyCmd`）を削除。
+
+---
+
 ## [1.8.0] - 2026-06-10
 
 ### Changed（変更）
@@ -154,7 +175,8 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/ykimura5963/Lilt/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/ykimura5963/Lilt/compare/v1.6.0...v1.7.0

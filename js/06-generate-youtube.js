@@ -66,53 +66,121 @@ async function loadYouTubeProjects(){
   }
 }
 
-/* ── 指定プロジェクトのdata.jsonとvideoを読み込む ── */
-async function loadYouTubeProject(videoId){
-  const bkUrl   = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
-  const dataUrl = `${bkUrl}/files/${videoId}/data.json`;
-  const vidUrl  = `${bkUrl}/files/${videoId}/video.mp4`;
+/* ── ファイルURL生成: root 空→静的マウント /files、指定時→ /library-file ── */
+function libFileUrl(bkUrl, root, id, name){
+  if(root && root.trim()){
+    return `${bkUrl}/library-file?root=${encodeURIComponent(root.trim())}`
+         + `&id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
+  }
+  return `${bkUrl}/files/${id}/${name}`;
+}
+
+/* ── 共通: data.json + 動画 + data.md を一括読込（戻り値=段落数） ── */
+async function loadProjectBundle(bkUrl, root, id, videoFile, label){
+  const resp = await fetch(libFileUrl(bkUrl, root, id, 'data.json'));
+  if(!resp.ok) throw new Error('data.json取得エラー: HTTP '+resp.status);
+  const data = await resp.json();
+  if(!Array.isArray(data.paras)) throw new Error('parasフィールドがありません');
+
+  PARAS.length = 0;
+  data.paras.forEach((p,i)=>{
+    p.id  = i;
+    const estEnd = p.end ?? (p.start + Math.max(2,(p.en||'').split(/\s+/).filter(Boolean).length*0.35));
+    p.end = estEnd;
+    p.words = buildWordsFromParsed(p.words||[], p, 0.35);
+    PARAS.push(p);
+  });
+  const lastPara = PARAS[PARAS.length-1];
+  if(lastPara) totalDur = lastPara.end;
+  renderTranscript();
+
+  /* 動画をバックエンドURLから読み込む（ネイティブcontrolsは非表示） */
+  const vid = document.getElementById('vid');
+  vid.controls = false;
+  vid.src = libFileUrl(bkUrl, root, id, videoFile || 'video.mp4');
+  vid.load();
+  if(typeof applyPlaybackSpeed==='function') applyPlaybackSpeed();
+  document.getElementById('local-wrap').style.display = '';
+  document.getElementById('yt-wrap').style.display    = 'none';
+  document.getElementById('no-file').style.display = 'none';
+  document.getElementById('file-name').textContent  = label || id;
+  document.getElementById('header-sub').textContent = data.contentBase || label || id;
+  currentBase = id;
+
+  /* data.md も取得して Generate テキストエリアへ */
   try{
-    const resp = await fetch(dataUrl);
-    if(!resp.ok) throw new Error('data.json取得エラー: HTTP '+resp.status);
-    const data = await resp.json();
-    if(!Array.isArray(data.paras)) throw new Error('parasフィールドがありません');
+    const mdResp = await fetch(libFileUrl(bkUrl, root, id, 'data.md'));
+    if(mdResp.ok){
+      const parsed = parseMdToTranscript(await mdResp.text());
+      if(parsed) window._pendingMdTranscript = parsed;
+    }
+  } catch(e){ /* md取得失敗は無視 */ }
 
-    PARAS.length = 0;
-    data.paras.forEach((p,i)=>{
-      p.id  = i;
-      const estEnd = p.end ?? (p.start + Math.max(2,(p.en||'').split(/\s+/).filter(Boolean).length*0.35));
-      p.end = estEnd;
-      p.words = buildWordsFromParsed(p.words||[], p, 0.35);
-      PARAS.push(p);
-    });
+  window._localVideoFile = null; /* バックエンド動画はローカルFileではない */
+  return data.paras.length;
+}
 
-    const lastPara = PARAS[PARAS.length-1];
-    if(lastPara) totalDur = lastPara.end;
-    renderTranscript();
+/* ── 指定プロジェクト（既定 projects/）を読み込む（生成タブの一覧から） ── */
+async function loadYouTubeProject(videoId){
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  try{
+    const n = await loadProjectBundle(bkUrl, '', videoId, 'video.mp4', videoId);
+    showToast(`✓ ${videoId} を読み込みました（${n}段落）`, false, 4000);
+  }catch(err){
+    showToast('読み込みエラー: '+err.message, true, 5000);
+  }
+}
 
-    /* 動画をバックエンドURLから読み込む */
-    const vid = document.getElementById('vid');
-    vid.src = vidUrl;
-    vid.load();
-    document.getElementById('local-wrap').style.display = '';
-    document.getElementById('yt-wrap').style.display    = 'none';
-    document.getElementById('chk-yt').checked = false;
-    document.getElementById('no-file').style.display = 'none';
-    document.getElementById('file-name').textContent  = videoId;
-    document.getElementById('header-sub').textContent = data.contentBase || videoId;
-    currentBase = videoId;
-
-    /* data.md も取得して Generate テキストエリアへ */
-    try{
-      const mdResp = await fetch(`${bkUrl}/files/${videoId}/data.md`);
-      if(mdResp.ok){
-        const parsed = parseMdToTranscript(await mdResp.text());
-        if(parsed) window._pendingMdTranscript = parsed;
-      }
-    } catch(e){ /* md取得失敗は無視 */ }
-
-    window._localVideoFile = null; /* バックエンド動画はローカルFileではない */
-    showToast(`✓ ${videoId} を読み込みました（${data.paras.length}段落）`, false, 4000);
+/* ══ 動画ライブラリ（「動画を開く」） ══ */
+function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function openLibrary(){
+  document.getElementById('lib-modal').style.display='flex';
+  loadLibraryIndex();
+}
+function closeLibrary(){
+  document.getElementById('lib-modal').style.display='none';
+}
+async function loadLibraryIndex(){
+  const bkUrl    = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const root     = document.getElementById('lib-root')?.value?.trim() || '';
+  const listEl   = document.getElementById('lib-list');
+  const statusEl = document.getElementById('lib-status');
+  statusEl.textContent='読み込み中...'; statusEl.className='gen-status';
+  listEl.innerHTML='';
+  window._libRoot = root;
+  try{
+    const url  = `${bkUrl}/projects` + (root ? `?root=${encodeURIComponent(root)}` : '');
+    const resp = await fetch(url);
+    if(!resp.ok){
+      let msg='HTTP '+resp.status;
+      try{ const e=await resp.json(); if(e.detail) msg=e.detail; }catch(_){}
+      throw new Error(msg);
+    }
+    const items = (await resp.json()).filter(p=>p.has_video || p.has_data);
+    window._libItems = items;
+    if(!items.length){ statusEl.textContent='動画フォルダが見つかりません'; return; }
+    statusEl.textContent=`${items.length}件`; statusEl.className='gen-status ok';
+    listEl.innerHTML = items.map((p,idx)=>`
+      <div class="lib-item">
+        <span class="lib-name" title="${_esc(p.video_id)}">${_esc(p.title||p.video_id)}</span>
+        ${p.has_data
+          ? `<button class="yt-proj-load" onclick="loadFromLibrary(${idx})">読込</button>`
+          : '<span style="font-size:10px;color:var(--muted);padding:2px 6px">data.jsonなし</span>'}
+      </div>`).join('');
+  }catch(err){
+    statusEl.textContent='取得失敗: '+err.message+'（バックエンドが起動していますか？）';
+    statusEl.className='gen-status err';
+  }
+}
+async function loadFromLibrary(idx){
+  const item = (window._libItems||[])[idx];
+  if(!item) return;
+  const root  = window._libRoot || '';
+  const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  try{
+    const n = await loadProjectBundle(bkUrl, root, item.video_id, item.video_file, item.title||item.video_id);
+    closeLibrary();
+    showToast(`✓ ${item.title||item.video_id} を読み込みました（${n}段落）`, false, 4000);
   }catch(err){
     showToast('読み込みエラー: '+err.message, true, 5000);
   }
@@ -529,24 +597,6 @@ function settingsHTML(){
         <button class="gen-btn danger" onclick="testOllamaConnection()">⚡ 接続テスト / モデル一覧取得</button>
       </div>
       <div class="gen-status" id="ollama-test-status" style="margin-top:4px"></div>
-      <div style="margin-top:10px;padding:10px;background:rgba(245,200,66,.06);border:.5px solid rgba(245,200,66,.2);border-radius:6px;font-size:11px;font-family:var(--mono);line-height:2;color:var(--muted)">
-        <div style="color:var(--accent);margin-bottom:2px">⚠ Failed to fetch の原因と対処</div>
-        <div style="color:var(--text);margin-bottom:6px">file:// で開くとブラウザがlocalhost通信をブロックします。<br>このアプリを<b>ローカルサーバー経由</b>で開いてください：</div>
-        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:4px;cursor:pointer;color:var(--text)" onclick="copyCmd('pyserver')" title="クリックでコピー">
-          ① HTMLと同じフォルダでターミナルを開き実行<br>
-          <span style="color:var(--accent)">python -m http.server 8080</span>
-        </div>
-        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:6px;cursor:pointer;color:var(--accent)" onclick="copyCmd('appurl')" title="クリックでコピー">
-          ② ブラウザで開く URL（クリックでコピー）<br>
-          http://localhost:8080/index.html
-        </div>
-        <div style="color:var(--text);margin-bottom:4px">③ Ollama も ORIGINS 設定が必要（一度だけ）：</div>
-        <div style="background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:4px;cursor:pointer;color:var(--text)" onclick="copyCmd('powershell')" title="クリックでコピー">
-          <span style="color:var(--muted)">新しいターミナルで：</span><br>
-          <span style="color:var(--accent)">$env:OLLAMA_ORIGINS="http://localhost:8080"; ollama serve</span>
-        </div>
-        <div style="color:var(--muted)">設定後「接続テスト」で確認してください</div>
-      </div>
     </div>
 
     <div id="yt-prov-runpod" style="${ytLlmBackend==='runpod'?'':'display:none'}">
@@ -650,22 +700,6 @@ async function testOllamaConnection(){
       statusEl.className = 'gen-status err';
     }
   }
-}
-
-/* ── コマンドをクリップボードにコピー ── */
-function copyCmd(type){
-  const cmds = {
-    powershell: '$env:OLLAMA_ORIGINS="http://localhost:8080"; ollama serve',
-    setx:       'setx OLLAMA_ORIGINS "http://localhost:8080" & ollama serve',
-    pyserver:   'python -m http.server 8080',
-    appurl:     'http://localhost:8080/index.html'
-  };
-  const text = cmds[type] || '';
-  navigator.clipboard.writeText(text).then(()=>{
-    showToast('コピーしました: '+text, false, 2500);
-  }).catch(()=>{
-    showToast(text, false, 4000);
-  });
 }
 
 /* ── 親フォルダ選択（FSA API・非対応ブラウザはダウンロード保存にフォールバック） ── */

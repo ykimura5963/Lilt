@@ -6,12 +6,11 @@ document.getElementById('local-file').addEventListener('change',function(){
   const vid=document.getElementById('vid');
   vid.volume=0.6;
   vid.src=URL.createObjectURL(file);
-  vid.load(); vid.controls=true;
+  vid.load(); vid.controls=false;
   applyPlaybackSpeed();   /* 保存済み速度＋ピッチ保持を適用（loadで1.0にリセットされるため） */
   document.getElementById('no-file').style.display='none';
   document.getElementById('file-name').textContent=file.name;
   document.getElementById('header-sub').textContent=file.name;
-  document.getElementById('chk-yt').checked=false;
   document.getElementById('local-wrap').style.display='';
   document.getElementById('yt-wrap').style.display='none';
   if(tickTimer){clearInterval(tickTimer);tickTimer=null;}
@@ -26,6 +25,12 @@ document.getElementById('vid').addEventListener('timeupdate',function(){
   if(this.duration&&totalDur!==this.duration) totalDur=this.duration;
   syncHighlight(this.currentTime);
   checkChunkRepeat(this.currentTime);
+});
+
+/* ネイティブcontrolsを廃したため、動画クリックで再生/一時停止をトグル */
+document.getElementById('vid').addEventListener('click',function(){
+  if(!this.src||this.src===location.href) return;
+  if(this.paused) this.play().catch(()=>{}); else this.pause();
 });
 
 /* ── data.md テキスト → Generate テキストエリア用文字列に変換 ── */
@@ -159,6 +164,16 @@ function checkChunkRepeat(rawSec){
 function seekByClick(e){
   const bg=document.getElementById('prog-bg'),r=bg.getBoundingClientRect();
   jumpTo(Math.max(0,Math.min(totalDur,(e.clientX-r.left)/r.width*totalDur)));
+}
+function playVideo(){
+  const isLoc=document.getElementById('local-wrap').style.display!=='none';
+  if(isLoc){ const vid=document.getElementById('vid'); if(vid&&vid.src&&vid.src!==location.href) vid.play().catch(()=>{}); }
+  else if(ytPlayer&&ytPlayer.playVideo){ ytPlayer.playVideo(); }
+}
+function pauseVideo(){
+  const isLoc=document.getElementById('local-wrap').style.display!=='none';
+  if(isLoc){ const vid=document.getElementById('vid'); if(vid) vid.pause(); }
+  else if(ytPlayer&&ytPlayer.pauseVideo){ ytPlayer.pauseVideo(); }
 }
 function applyPlaybackSpeed(){
   const vid=document.getElementById('vid');

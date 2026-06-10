@@ -269,7 +269,7 @@ function applySavedSettings(){
   if(typeof s.showElision === 'boolean') showElision = s.showElision;
   if(typeof s.rhythmSync  === 'boolean') rhythmSync  = s.rhythmSync;
   if(typeof s.autoFollow  === 'boolean') autoFollow  = s.autoFollow;
-  if(typeof s.fontScale   === 'number')  fontScale   = Math.min(1.6, Math.max(0.8, s.fontScale));
+  if(typeof s.fontScale   === 'number')  fontScale   = s.fontScale>1 ? 1.2 : 1;
   if(typeof s.timeOffset  === 'number')  timeOffset  = s.timeOffset;
   if(typeof s.playSpeed   === 'number')  playSpeed   = s.playSpeed;
   if(typeof s.ytBackendUrl  === 'string') ytBackendUrl  = s.ytBackendUrl;
@@ -289,6 +289,7 @@ function applySavedSettings(){
   const setOn=(id,on)=>{const b=document.getElementById(id); if(b) b.classList.toggle('on',!!on);};
   setOn('btn-stress',showStress); setOn('btn-inton',showInton); setOn('btn-elision',showElision);
   setOn('btn-rhythm',rhythmSync); setOn('btn-follow',autoFollow);
+  setOn('btn-font-inc',fontScale>1);
 
   /* 速度セレクト */
   const spd=document.getElementById('spd-sel');

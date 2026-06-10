@@ -9,10 +9,10 @@ import threading
 import time
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.8.0"
+LILT_VERSION = "1.9.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -850,37 +850,92 @@ def _rule_annotate_para(para: dict, idx: int) -> dict:
 
 # ── API Routes ───────────────────────────────────────────────────────────────
 
+VIDEO_LIST_EXTS = {".mp4", ".webm", ".mkv", ".m4v", ".avi", ".mov"}
+
+
+def _resolve_root(root: Optional[str]) -> str:
+    """ライブラリのルートフォルダを解決。
+    未指定なら PROJECTS_DIR。指定時は realpath 化して存在チェック。"""
+    base = root.strip() if root else ""
+    target = os.path.realpath(base) if base else os.path.realpath(PROJECTS_DIR)
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=400, detail=f"フォルダが見つかりません: {target}")
+    return target
+
+
+def _find_video_file(proj_dir: str) -> Optional[str]:
+    """フォルダ内の動画ファイル名を返す（video.* を優先、無ければ任意の動画拡張子）。"""
+    files = [f for f in os.listdir(proj_dir) if os.path.isfile(os.path.join(proj_dir, f))]
+    vids  = [f for f in files if os.path.splitext(f)[1].lower() in VIDEO_LIST_EXTS]
+    if not vids:
+        return None
+    # video.* を優先、それ以外はアルファベット順で先頭
+    vids.sort(key=lambda f: (not f.startswith("video."), f.lower()))
+    return vids[0]
+
+
+def _read_title(proj_dir: str, fallback: str) -> str:
+    """表示名の決定順: title.txt（先頭の非空行）→ data.json の contentBase → フォルダ名。"""
+    txt = os.path.join(proj_dir, "title.txt")
+    if os.path.isfile(txt):
+        try:
+            with open(txt, encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if s:
+                        return s
+        except Exception:
+            pass
+    data = os.path.join(proj_dir, "data.json")
+    if os.path.isfile(data):
+        try:
+            with open(data, encoding="utf-8") as f:
+                d = json.load(f)
+            if d.get("contentBase"):
+                return d["contentBase"]
+        except Exception:
+            pass
+    return fallback
+
+
 @app.get("/projects")
-async def list_projects():
-    if not os.path.isdir(PROJECTS_DIR):
-        return []
+async def list_projects(root: Optional[str] = Query(None)):
+    target = _resolve_root(root)
     results = []
-    for vid_id in sorted(os.listdir(PROJECTS_DIR)):
-        proj_dir = os.path.join(PROJECTS_DIR, vid_id)
+    for vid_id in sorted(os.listdir(target)):
+        proj_dir = os.path.join(target, vid_id)
         if not os.path.isdir(proj_dir):
             continue
-        video_exts = {".mp4", ".webm", ".mkv", ".m4v", ".avi", ".mov"}
-        has_video = any(
-            os.path.splitext(f)[1].lower() in video_exts
-            for f in os.listdir(proj_dir)
-            if os.path.isfile(os.path.join(proj_dir, f)) and f.startswith("video.")
-        )
-        has_data  = os.path.exists(os.path.join(proj_dir, "data.json"))
-        title = vid_id
-        if has_data:
-            try:
-                with open(os.path.join(proj_dir, "data.json"), encoding="utf-8") as f:
-                    d = json.load(f)
-                title = d.get("contentBase", vid_id)
-            except Exception:
-                pass
+        video_file = _find_video_file(proj_dir)
+        has_data   = os.path.exists(os.path.join(proj_dir, "data.json"))
         results.append({
-            "video_id":  vid_id,
-            "title":     title,
-            "has_video": has_video,
-            "has_data":  has_data,
+            "video_id":   vid_id,
+            "title":      _read_title(proj_dir, vid_id),
+            "has_video":  bool(video_file),
+            "video_file": video_file,
+            "has_data":   has_data,
         })
     return results
+
+
+@app.get("/library-file")
+async def library_file(
+    root: str = Query(...),
+    id:   str = Query(...),
+    name: str = Query(...),
+):
+    """任意ルート配下のファイルを配信（トラバーサル対策付き）。
+    /files/* は PROJECTS_DIR 固定マウントのため、任意ルート用に別途用意。"""
+    if not re.match(r"^[A-Za-z0-9_.\-]+$", id) or not re.match(r"^[A-Za-z0-9_.\-]+$", name):
+        raise HTTPException(status_code=400, detail="無効なidまたはファイル名です")
+    base   = _resolve_root(root)
+    target = os.path.realpath(os.path.join(base, id, name))
+    # target が base 配下にあることを保証（ディレクトリトラバーサル防止）
+    if os.path.commonpath([base, target]) != base:
+        raise HTTPException(status_code=400, detail="不正なパスです")
+    if not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="ファイルが見つかりません")
+    return FileResponse(target)
 
 
 @app.delete("/projects/{video_id}")
@@ -1020,6 +1075,9 @@ async def process_youtube(request: ProcessRequest, http_request: Request):
             )
             with open(os.path.join(output_dir, "info.txt"), "w", encoding="utf-8") as f:
                 f.write(info_text)
+            # ライブラリ一覧の表示名に使う動画タイトル（title.txt 優先で読まれる）
+            with open(os.path.join(output_dir, "title.txt"), "w", encoding="utf-8") as f:
+                f.write((video_title or video_id) + "\n")
         except Exception as e:
             logger.warning(f"info.txt の保存に失敗: {e}")
 
