@@ -184,17 +184,17 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.9.1...HEAD
-[1.9.1]: https://github.com/ykimura5963/Lilt/compare/v1.9.0...v1.9.1
-[1.9.0]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...v1.9.0
-[1.8.0]: https://github.com/ykimura5963/Lilt/compare/v1.7.1...v1.8.0
-[1.7.1]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...v1.7.1
-[1.7.0]: https://github.com/ykimura5963/Lilt/compare/v1.6.0...v1.7.0
-[1.6.0]: https://github.com/ykimura5963/Lilt/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...v1.5.0
-[1.4.1]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...v1.4.1
-[1.4.0]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/ykimura5963/Lilt/releases/tag/v1.0.0
+[Unreleased]: https://github.com/yuna5963/Lilt/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/yuna5963/Lilt/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/yuna5963/Lilt/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/yuna5963/Lilt/compare/v1.7.1...v1.8.0
+[1.7.1]: https://github.com/yuna5963/Lilt/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/yuna5963/Lilt/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/yuna5963/Lilt/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/yuna5963/Lilt/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/yuna5963/Lilt/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/yuna5963/Lilt/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/yuna5963/Lilt/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/yuna5963/Lilt/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/yuna5963/Lilt/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/yuna5963/Lilt/releases/tag/v1.0.0
