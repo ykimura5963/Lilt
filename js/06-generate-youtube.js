@@ -140,6 +140,14 @@ async function loadYouTubeProject(videoId){
 /* ══ 動画ライブラリ（「動画を開く」） ══ */
 function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function openLibrary(){
+  /* スマホ（生成系なし・バックエンド非依存）は端末ローカルのフォルダ選択に分岐 */
+  if(window.matchMedia('(max-width:640px)').matches && typeof pickLocalDir==='function'){
+    pickLocalDir();
+    return;
+  }
+  /* PC: バックエンド経由のライブラリ */
+  const descEl = document.getElementById('lib-desc');     if(descEl) descEl.style.display='';
+  const rootRow = document.getElementById('lib-root-row'); if(rootRow) rootRow.style.display='';
   document.getElementById('lib-modal').style.display='flex';
   loadLibraryIndex();
 }
@@ -648,7 +656,7 @@ function settingsHTML(){
   <div class="gen-section">
     <div class="gen-label">親フォルダ（保存先）</div>
     <div class="gen-row">
-      <button class="gen-btn danger" id="folder-pick-btn" onclick="selectSaveFolder()" ${fsa?'':'disabled style="opacity:.5;cursor:not-allowed"'}>📁 親フォルダを選択</button>
+      <button class="gen-btn danger" id="folder-pick-btn" onclick="selectSaveFolder()" ${fsa?'':'style="opacity:.6"'}>📁 親フォルダを選択</button>
       <button class="gen-btn danger" onclick="clearSaveFolder()" style="font-size:10px">解除</button>
     </div>
     <div class="gen-status" id="folder-status"></div>
@@ -711,7 +719,7 @@ async function testOllamaConnection(){
 /* ── 親フォルダ選択（FSA API・非対応ブラウザはダウンロード保存にフォールバック） ── */
 async function selectSaveFolder(){
   if(!fsaSupported()){
-    showToast('このブラウザはフォルダ保存に非対応です（Chrome/Edge推奨）。\n保存はダウンロードになります。',false,4500);
+    showToast('フォルダ保存が使えません。\nChrome / Edge で http://localhost か http://127.0.0.1 から開いてください\n（LAN IP・ホスト名・file:// は不可）。',true,6000);
     return;
   }
   try{

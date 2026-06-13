@@ -22,7 +22,11 @@
     <div class="video-panel">
       <div class="file-bar">
         <button class="file-btn" onclick="openLibrary()">▶ 動画を開く</button>
-        <label class="md-btn" id="md-label2" style="background:transparent;border-color:var(--bd2);color:var(--muted)">📁 ファイルから<input type="file" id="local-file" accept="video/*,audio/*" style="display:none"></label>
+        <!-- 「ファイルから」ボタンは廃止（翻訳/アノテーション生成からの導線で「動画を開く」のみで足りるため）。
+             input#local-file は 04-player.js / 09-io-save-load.js が参照するため非表示で残置。 -->
+        <input type="file" id="local-file" accept="video/*,audio/*" style="display:none">
+        <!-- スマホ（Android）用: 端末ローカルの親フォルダを選び、配下のプロジェクトを読み込む -->
+        <input type="file" id="local-dir" webkitdirectory directory multiple style="display:none" onchange="onLocalDirSelected(this)">
         <label class="md-btn" id="md-label" style="display:none">📝 MD読込<input type="file" id="md-file" accept=".md,.txt" style="display:none" onchange="onMdFileLoad(this)"></label>
         <label class="anno-btn" id="anno-bar-label" style="display:none">📂 アノテーション<input type="file" id="anno-bar-input" accept=".json,application/json" style="display:none" onchange="onAnnotationFileLoad(this)"></label>
         <span class="file-name" id="file-name">未選択</span>
@@ -44,15 +48,15 @@
 
     <!-- ── コントロールバー ── -->
     <div class="ctrl-bar" id="ctrl-bar">
-      <button class="ctrl-btn on" id="btn-stress"  onclick="toggleLayer('stress',this)">● 強弱</button>
-      <button class="ctrl-btn on" id="btn-inton"   onclick="toggleLayer('inton',this)">〜 抑揚</button>
-      <button class="ctrl-btn on" id="btn-elision" onclick="toggleLayer('elision',this)">× 消音</button>
-      <button class="ctrl-btn on" id="btn-rhythm" onclick="toggleRhythmSync(this)" title="チャンク内の語タイミングを話速リズムで配分（OFFで均等割り）">♪ リズム</button>
-      <button class="ctrl-btn on" id="btn-follow" onclick="toggleAutoFollow(this)" title="再生中、現在の行へ自動スクロール">📌 追従</button>
-      <button class="ctrl-btn" id="btn-chunk-repeat" type="button" onclick="toggleChunkRepeat()" title="再生中の段落を繰り返し">🔁 チャンク</button>
-      <button class="ctrl-btn" id="btn-font-inc" onclick="toggleFontScale(this)" title="文字の拡大/縮小を切替">A＋</button>
+      <button class="ctrl-btn on" id="btn-stress"  onclick="toggleLayer('stress',this)" title="強弱（強勢）の表示"><span class="ico">●</span><span class="lbl">強弱</span></button>
+      <button class="ctrl-btn on" id="btn-inton"   onclick="toggleLayer('inton',this)" title="抑揚（イントネーション）の表示"><span class="ico">〜</span><span class="lbl">抑揚</span></button>
+      <button class="ctrl-btn on" id="btn-elision" onclick="toggleLayer('elision',this)" title="消音（脱落・弱化）の表示"><span class="ico">×</span><span class="lbl">消音</span></button>
+      <button class="ctrl-btn on" id="btn-rhythm" onclick="toggleRhythmSync(this)" title="チャンク内の語タイミングを話速リズムで配分（OFFで均等割り）"><span class="ico">♪</span><span class="lbl">リズム</span></button>
+      <button class="ctrl-btn on" id="btn-follow" onclick="toggleAutoFollow(this)" title="再生中、現在の行へ自動スクロール"><span class="ico">📌</span><span class="lbl">追従</span></button>
+      <button class="ctrl-btn" id="btn-chunk-repeat" type="button" onclick="toggleChunkRepeat()" title="再生中の段落を繰り返し"><span class="ico">🔁</span><span class="lbl">チャンク</span></button>
+      <button class="ctrl-btn" id="btn-font-inc" onclick="toggleFontScale(this)" title="文字の拡大/縮小を切替"><span class="ico">A＋</span></button>
       <select class="spd" id="offset-sel" onchange="updateOffset(this.value)" title="同期オフセット（音声が速い→マイナス、遅い→プラス）"></select>
-      <select class="spd" id="spd-sel" onchange="setSpeed(this.value)">
+      <select class="spd" id="spd-sel" onchange="setSpeed(this.value)" title="再生速度">
         <option value="0.5">0.5×</option><option value="0.75">0.75×</option>
         <option value="1" selected>1.0×</option><option value="1.25">1.25×</option>
       </select>
@@ -65,9 +69,9 @@
       <select class="spd" id="sh-gap" onchange="setPracticeGap(this.value)" title="聴く→録音の間（ポーズ）">
         <option value="600">間0.6s</option><option value="1200" selected>間1.2s</option><option value="2000">間2.0s</option><option value="3000">間3.0s</option>
       </select>
-      <button class="ctrl-btn" id="btn-sh-auto" onclick="togglePracticeAuto(this)" title="チャンクを自動で進む連続練習">▶▶ 連続</button>
-      <button class="ctrl-btn play-ctrl" id="btn-play" onclick="playVideo()" title="再生">▶</button>
-      <button class="ctrl-btn play-ctrl" id="btn-pause" onclick="pauseVideo()" title="停止">⏸</button>
+      <button class="ctrl-btn" id="btn-sh-auto" onclick="togglePracticeAuto(this)" title="チャンクを自動で進む連続練習"><span class="ico">⏩</span><span class="lbl">連続</span></button>
+      <button class="ctrl-btn play-ctrl" id="btn-play" onclick="playVideo()" title="再生"><span class="ico">▶</span></button>
+      <button class="ctrl-btn play-ctrl" id="btn-pause" onclick="pauseVideo()" title="停止"><span class="ico">⏸</span></button>
       <div class="prog-wrap"><div class="prog-bg" id="prog-bg" onclick="seekByClick(event)"><div class="prog-fill" id="prog-fill"></div></div></div>
       <span class="time-disp" id="time-disp">0:00</span>
     </div>
@@ -82,7 +86,7 @@
       </span>
     </div>
 
-    <!-- ── スマホ専用：凡例&操作アコーディオン ── -->
+    <!-- ── スマホ専用：凡例&操作アコーディオン（コメントアウト） ──
     <div id="mobile-panel">
       <div class="mp-toggle" id="mp-toggle" onclick="toggleMobilePanel()">
         <span>▸ 凡例</span><span class="arr">▾</span>
@@ -91,6 +95,8 @@
         <div id="mp-content" style="padding:.75rem 1rem;background:var(--surf2);border-bottom:.5px solid var(--bd)"></div>
       </div>
     </div>
+    -->
+    <div id="mobile-panel" style="display:none"></div>
 
     <!-- ── トランスクリプト ── -->
     <div class="transcript-panel" id="transcript"></div>
@@ -121,8 +127,8 @@
       <div style="font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.08em">VIDEO LIBRARY</div>
       <button onclick="closeLibrary()" style="font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:5px;border:.5px solid var(--bd2);background:transparent;color:var(--muted);cursor:pointer">閉じる</button>
     </div>
-    <div style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.7">バックエンドの projects/ 配下、または任意の親フォルダ内の各動画フォルダ（動画・data.json・data.md）を一覧から一括読込します。</div>
-    <div style="display:flex;gap:6px;align-items:center">
+    <div id="lib-desc" style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.7">バックエンドの projects/ 配下、または任意の親フォルダ内の各動画フォルダ（動画・data.json・data.md）を一覧から一括読込します。</div>
+    <div id="lib-root-row" style="display:flex;gap:6px;align-items:center">
       <input class="gen-input" id="lib-root" placeholder="ルートフォルダ（空=既定 projects）" style="flex:1" onkeydown="if(event.key==='Enter')loadLibraryIndex()">
       <button class="md-btn" onclick="loadLibraryIndex()">↻ 再読込</button>
     </div>
@@ -146,6 +152,7 @@
 <script src="js/09-io-save-load.js"></script>
 <script src="js/10-shadowing.js"></script>
 <script src="js/12-notes.js"></script>
+<script src="js/13-local-player.js"></script>
 <script src="js/11-init.js"></script>
 
 </body>

@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.10.0"
+LILT_VERSION = "1.11.0"
 
 app = FastAPI(title="Lilt API")
 

@@ -17,13 +17,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 body{display:flex;flex-direction:column}
 
 header{
-  flex-shrink:0;height:44px;
+  flex-shrink:0;height:30px;
   display:flex;align-items:center;justify-content:space-between;
   padding:0 1rem;
   background:var(--surf);border-bottom:.5px solid var(--bd);
   z-index:20;
 }
-.logo{font-size:17px;font-weight:700;letter-spacing:.12em;color:var(--accent);text-transform:uppercase}
+.logo{font-size:15px;font-weight:700;letter-spacing:.12em;color:var(--accent);text-transform:uppercase}
 .header-sub{font-size:10px;color:var(--muted);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
 
 /* メインエリア: 残り全高を占める */
@@ -93,6 +93,8 @@ header{
   cursor:pointer;transition:all .12s;white-space:nowrap;
 }
 .ctrl-btn.on{background:rgba(245,200,66,.1);color:var(--accent);border-color:rgba(245,200,66,.3)}
+.ctrl-btn .ico{display:inline-flex;align-items:center;justify-content:center;line-height:1}
+/* デスクトップではアイコン＋ラベル両方表示（モバイルでラベルを隠す） */
 .play-ctrl{font-size:13px;padding:4px 11px;color:var(--text)}
 .play-ctrl:hover{color:var(--accent);border-color:rgba(245,200,66,.35);background:rgba(245,200,66,.08)}
 .spd{font-family:var(--mono);font-size:11px;background:var(--surf2);border:.5px solid var(--bd2);color:var(--text);border-radius:5px;padding:4px 6px;cursor:pointer}
@@ -250,49 +252,61 @@ header{
 .pt{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:.35rem}
 
 /* ═══ MOBILE portrait ≤640px ═══
-   縦: header → [動画＋操作パネル＋凡例 (折りたたみ)] → テキスト
-   サイドバーはフレーズタブのみ末尾に残す
+   header(30px) と 動画 を画面上部に固定。コントロールは動画上部に半透明オーバーレイ。
+   テキスト（トランスクリプト／フレーズ）はその下を通常スクロール。
 */
 @media (max-width:640px){
+  :root{
+    --m-header:30px;
+    --m-filebar:30px;
+    --m-video:min(56.25vw, 42vh);   /* 16:9、縦長になりすぎないようvhでクランプ */
+  }
   html,body{height:auto;overflow:auto}
-  body{display:block}         /* flex解除→通常フロー */
+  body{display:block}               /* flex解除→通常フロー */
 
-  header{position:sticky;top:0;z-index:30}
+  /* ヘッダー固定（30px） */
+  header{position:fixed;top:0;left:0;right:0;height:var(--m-header);z-index:40;padding:0 .75rem}
+  .header-sub{font-size:9px;max-width:60%}
 
   .main{display:block;overflow:visible}
-  .left-col{display:block;overflow:visible}
+  .left-col{
+    display:block;overflow:visible;
+    /* 固定スタック（header + file-bar + 動画）の高さ分だけ本文を押し下げる */
+    padding-top:calc(var(--m-header) + var(--m-filebar) + var(--m-video));
+  }
 
-  /* 動画 */
-  .video-panel{display:block}
+  /* 動画パネル（file-bar + 動画）をヘッダー直下に固定 */
+  .video-panel{
+    position:fixed;top:var(--m-header);left:0;right:0;z-index:20;background:#000;
+  }
+  .file-bar{height:var(--m-filebar);padding:0 8px;gap:6px}
+  .file-btn{font-size:10px;padding:3px 8px}
+  .file-name{font-size:9px}
+  .video-wrap{padding-bottom:0;height:var(--m-video)}
 
-  /* ctrl-bar: sticky で動画直下に固定 */
+  /* コントロール: 動画上部に半透明オーバーレイ。ラベルを隠しアイコンのみ＝サイズ統一 */
   .ctrl-bar{
-    position:sticky;
-    top:44px;          /* headerの高さ分 */
-    z-index:20;
-    background:var(--surf);
+    position:fixed;
+    top:calc(var(--m-header) + var(--m-filebar));
+    left:0;right:0;z-index:30;
+    display:flex;flex-wrap:wrap;align-items:center;gap:5px;
+    padding:5px 7px;
+    background:rgba(12,13,15,.6);
+    backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+    border-bottom:none;
   }
-
-  /* スマホ用 凡例・操作パネル（ctrl-bar直下のアコーディオン） */
-  #mobile-panel{display:block}
-  #mobile-panel-inner{
-    background:var(--surf2);
-    border-bottom:.5px solid var(--bd);
-    padding:.75rem 1rem;
-    font-size:11px;
-    font-family:var(--mono);
-    color:var(--text);
+  .ctrl-btn .lbl{display:none}
+  .ctrl-btn{
+    width:32px;height:30px;padding:0;gap:0;justify-content:center;font-size:13px;
   }
-  .mp-toggle{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:.5rem 1rem;
-    background:var(--surf);border-bottom:.5px solid var(--bd);
-    font-size:11px;font-family:var(--mono);color:var(--muted);
-    cursor:pointer;user-select:none;
-    position:sticky;top:88px;z-index:19;  /* header+ctrl-barの下 */
-  }
-  .mp-toggle .arr{transition:transform .2s}
-  .mp-toggle.open .arr{transform:rotate(180deg)}
+  .ctrl-btn .ico{font-size:13px}
+  .play-ctrl{width:32px;height:30px;padding:0;font-size:14px}
+  /* セレクトも高さを揃える */
+  .spd{height:30px;padding:0 5px;font-size:10px;text-align:center}
+  #offset-sel{width:auto}
+  /* プログレスバー＋時刻は最終行へ（全幅） */
+  .prog-wrap{order:50;flex:1 1 100%;min-width:0}
+  .time-disp{order:51;flex:0 0 auto;font-size:10px;min-width:0;text-align:left}
 
   /* テキストパネル: 通常フロー */
   .transcript-panel{
