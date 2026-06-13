@@ -48,6 +48,7 @@ async function loadYouTubeProjects(){
     const resp = await fetch(`${bkUrl}/projects`);
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const projects = await resp.json();
+    window._ytProjects = projects;
     if(!projects.length){
       listEl.innerHTML = '<span style="font-size:11px;color:var(--muted);font-family:var(--mono)">保存済みプロジェクトなし</span>';
       return;
@@ -104,7 +105,7 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
   document.getElementById('yt-wrap').style.display    = 'none';
   document.getElementById('no-file').style.display = 'none';
   document.getElementById('file-name').textContent  = label || id;
-  document.getElementById('header-sub').textContent = data.contentBase || label || id;
+  document.getElementById('header-sub').textContent = label || data.contentBase || id;
   currentBase = id;
 
   /* data.md も取得して Generate テキストエリアへ */
@@ -123,9 +124,10 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
 /* ── 指定プロジェクト（既定 projects/）を読み込む（生成タブの一覧から） ── */
 async function loadYouTubeProject(videoId){
   const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const title = (window._ytProjects||[]).find(p=>p.video_id===videoId)?.title || videoId;
   try{
-    const n = await loadProjectBundle(bkUrl, '', videoId, 'video.mp4', videoId);
-    showToast(`✓ ${videoId} を読み込みました（${n}段落）`, false, 4000);
+    const n = await loadProjectBundle(bkUrl, '', videoId, 'video.mp4', title);
+    showToast(`✓ ${title} を読み込みました（${n}段落）`, false, 4000);
   }catch(err){
     showToast('読み込みエラー: '+err.message, true, 5000);
   }

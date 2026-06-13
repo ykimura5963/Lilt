@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.9.1"
+LILT_VERSION = "1.9.2"
 
 app = FastAPI(title="Lilt API")
 
@@ -278,6 +278,23 @@ Output ONLY valid complete JSON in this exact format (same length and order as t
 {"translations":["日本語訳1","日本語訳2"]}"""
 
 
+# 末尾要素の閉じクオートとして現れがちな全角・CJK引用符（一部モデルが " の代わりに出力する）
+_CLOSING_QUOTE_CHARS = "\"'‘’“”「」『』"
+_UNTERMINATED_TAIL_RE = re.compile(rf"^(.*?)([{_CLOSING_QUOTE_CHARS}]*)([\]\}}]+)$", re.DOTALL)
+
+
+def _close_unterminated_string(s: str) -> str:
+    """末尾要素の閉じクオートが欠落・」』等のCJK括弧に化けているケースを補修する。
+    例: ...お礼を言います。」]}  →  ...お礼を言います。」"]}"""
+    m = _UNTERMINATED_TAIL_RE.match(s)
+    if not m:
+        return s
+    body, quote, tail = m.group(1), m.group(2), m.group(3)
+    if quote.endswith('"'):
+        return s
+    return body + quote + '"' + tail
+
+
 def _parse_translations(raw: str) -> list:
     """LLM応答から訳文リストを取り出す。
     {"translations":[...]} / 素の配列 [...] / 末尾欠けの補修 に対応。"""
@@ -293,19 +310,24 @@ def _parse_translations(raw: str) -> list:
 
     data = None
     for c in (cand_fixed, cand):
-        try:
-            # strict=False: 文字列内の生の改行/タブなど制御文字を許容
-            data = json.loads(c, strict=False)
-            break
-        except json.JSONDecodeError:
-            for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
-                try:
-                    data = json.loads(c + suffix, strict=False)
-                    break
-                except json.JSONDecodeError:
-                    continue
+        closed = _close_unterminated_string(c)
+        variants = [closed, c] if closed != c else [c]
+        for variant in variants:
+            try:
+                # strict=False: 文字列内の生の改行/タブなど制御文字を許容
+                data = json.loads(variant, strict=False)
+                break
+            except json.JSONDecodeError:
+                for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
+                    try:
+                        data = json.loads(variant + suffix, strict=False)
+                        break
+                    except json.JSONDecodeError:
+                        continue
             if data is not None:
                 break
+        if data is not None:
+            break
     if data is None:
         raise ValueError(f"JSON解析不可（{len(cand)}字）")
 
@@ -1114,15 +1136,19 @@ async def process_youtube(request: ProcessRequest, http_request: Request):
             translate_dest = request.ollama_url
         logger.info(f"Translation provider: {_provider} | model={translate_model} | endpoint={translate_dest}")
 
-        WINDOW = 12
+        # ローカル小型モデル（gemma 12b q4 等）はJSON配列が長いほど構造を崩しやすい。
+        # 1リクエストの件数を絞り、応答を短く保って解析失敗自体を減らす。
+        WINDOW = 6
         windows = [paragraphs_raw[i:i+WINDOW] for i in range(0, len(paragraphs_raw), WINDOW)]
         for wi, window in enumerate(windows):
             pct = 25 + int((wi / max(len(windows), 1)) * 58)   # 25 → 83%
             yield send({"type": "progress", "stage": "llm", "pct": pct,
                         "msg": f"日本語訳を生成中（{_llm_label}）... {wi+1}/{len(windows)}"})
             cancel_event = threading.Event()
+            # _translate_window_safe: JSON解析失敗・件数不足なら二分割で再試行し、
+            # 最終的に1文ずつ素のテキストで訳す（ウィンドウ全滅を防ぐ）。
             fut = loop.run_in_executor(
-                None, _translate_window, window,
+                None, _translate_window_safe, window,
                 _provider, request.ollama_url, translate_model,
                 request.translate_endpoint, request.translate_api_key, cancel_event,
             )
@@ -1246,7 +1272,7 @@ async def retranslate(video_id: str, request: RetranslateRequest, http_request: 
             except Exception as e:
                 logger.warning(f"retranslate の保存に失敗: {e}")
 
-        WINDOW  = 12
+        WINDOW  = 6   # 生成側と同様、応答を短く保ち解析失敗を減らす
         windows = [paras[i:i+WINDOW] for i in range(0, len(paras), WINDOW)]
         filled  = 0
         for wi, window in enumerate(windows):
