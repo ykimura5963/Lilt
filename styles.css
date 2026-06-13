@@ -128,6 +128,34 @@ header{
 .pcard-repeat{font-size:10px;padding:1px 6px;border-radius:4px;cursor:pointer;border:.5px solid var(--bd2);background:transparent;color:var(--muted);font-family:var(--mono)}
 .pcard-repeat:hover,.pcard-repeat.on{color:var(--accent);border-color:rgba(245,200,66,.35)}
 
+/* ── チャンクメモ（.para-head と .sentence の間） ── */
+.para-note{margin:0 0 .5rem}
+/* 未入力トリガー: 普段は非表示・スペースも取らず、チャンク hover 時のみ表示 */
+.para-note-add{
+  display:none;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:text;
+  border:.5px dashed var(--bd2);border-radius:4px;padding:2px 8px;
+  transition:color .15s,border-color .15s,background .15s;
+}
+.para:hover .para-note-add{display:inline-block}
+.para-note-add:hover{color:var(--accent);border-color:rgba(245,200,66,.35);background:rgba(245,200,66,.08)}
+/* 入力済み: 常時表示（黄アクセントの控えめなカード、改行保持） */
+.para-note.has-note .para-note-view{
+  display:block;cursor:text;white-space:pre-wrap;word-break:break-word;
+  font-size:12px;line-height:1.55;color:var(--text);
+  border-left:2px solid rgba(245,200,66,.5);background:rgba(245,200,66,.05);
+  border-radius:0 4px 4px 0;padding:4px 10px;transition:background .15s;
+}
+.para-note.has-note .para-note-view:hover{background:rgba(245,200,66,.09)}
+/* 編集 textarea（高さ自動調整・自動保存） */
+.para-note-edit{
+  width:100%;box-sizing:border-box;resize:none;overflow:hidden;min-height:30px;
+  font-family:inherit;font-size:12px;line-height:1.55;color:var(--text);
+  background:var(--surf2);border:.5px solid var(--bd2);border-radius:5px;
+  padding:6px 9px;outline:none;transition:border-color .2s;
+}
+.para-note-edit:focus{border-color:rgba(245,200,66,.45)}
+.para-note-edit.saved{border-color:var(--accent)}
+
 /* ── シャドーイング（録音 + A/B） ── */
 .sh-rec{
   flex-shrink:0;font-size:15px;padding:5px 10px;border-radius:5px;cursor:pointer;

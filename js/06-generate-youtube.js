@@ -93,6 +93,10 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
   });
   const lastPara = PARAS[PARAS.length-1];
   if(lastPara) totalDur = lastPara.end;
+
+  /* チャンクメモ（notes.json）を描画前に読み込む */
+  if(typeof loadNotes==='function') await loadNotes({ mode:'backend', bkUrl, root: root||'', id });
+
   renderTranscript();
 
   /* 動画をバックエンドURLから読み込む（ネイティブcontrolsは非表示） */

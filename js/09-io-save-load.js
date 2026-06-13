@@ -126,6 +126,8 @@ async function tryAutoLoadAnnotation(base){
           window.PARAS.push(p);
         });
         totalDur = data.paras[data.paras.length-1]?.end || totalDur;
+        /* チャンクメモ（notes.json）を描画前に読み込む */
+        if(typeof loadNotesFSA==='function') await loadNotesFSA(targetDir);
         renderTranscript();
         jsonLoaded = true;
         showToast(`✓ ${fname} を自動読み込みしました`, false, 3000);

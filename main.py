@@ -7,7 +7,7 @@ import logging
 import datetime
 import threading
 import time
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Dict
 
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +21,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.9.2"
+LILT_VERSION = "1.10.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -80,6 +80,12 @@ class RetranslateRequest(BaseModel):
     translate_provider: str = "ollama"   # ollama | runpod | openrouter | openai
     translate_endpoint: str = ""
     translate_api_key: str = ""
+
+
+class NotesRequest(BaseModel):
+    """チャンク（段落）ごとの自由メモ。キーは段落インデックス（文字列）、値はメモ本文。
+    data.json / data.md とは独立した notes.json に保存するため、再翻訳の影響を受けない。"""
+    notes: Dict[str, str] = {}
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -960,6 +966,36 @@ async def library_file(
     if not os.path.isfile(target):
         raise HTTPException(status_code=404, detail="ファイルが見つかりません")
     return FileResponse(target)
+
+
+@app.post("/notes/{video_id}")
+async def save_notes(video_id: str, request: NotesRequest, root: Optional[str] = Query(None)):
+    """チャンクごとの自由メモを動画フォルダの notes.json に保存する。
+    data.json / data.md とは別ファイルのため再翻訳・再生成で上書きされない。
+    読み込みは既存の /files・/library-file（notes.json）を流用する。"""
+    if not re.match(r"^[A-Za-z0-9_.\-]+$", video_id):
+        raise HTTPException(status_code=400, detail="無効なvideo_idです")
+    base   = _resolve_root(root)
+    target = os.path.realpath(os.path.join(base, video_id))
+    # video_id フォルダが base 配下にあることを保証（ディレクトリトラバーサル防止）
+    if os.path.commonpath([base, target]) != base:
+        raise HTTPException(status_code=400, detail="不正なパスです")
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません")
+    # 空文字のメモは保存しない（notes.json を綺麗に保つ）
+    notes = {k: v for k, v in request.notes.items() if (v or "").strip()}
+    payload = {
+        "version":     "1",
+        "contentBase": video_id,
+        "updatedAt":   datetime.datetime.utcnow().isoformat() + "Z",
+        "notes":       notes,
+    }
+    try:
+        with open(os.path.join(target, "notes.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"メモの保存に失敗しました: {e}")
+    return {"status": "saved", "video_id": video_id, "count": len(notes)}
 
 
 @app.delete("/projects/{video_id}")

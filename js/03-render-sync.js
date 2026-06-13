@@ -60,6 +60,7 @@ function renderTranscript(){
     html+=`<button type="button" class="sh-practice" data-pi="${p.id}" onclick="startPractice(${p.id});event.stopPropagation()" title="このチャンクから練習（聴く→間→録音→比較）">🎧</button>`;
     html+=`<span class="sh-controls" id="sh-${p.id}"></span>`;
     html+=`</div>`;
+    if(typeof renderNoteBlock==='function') html+=renderNoteBlock(p.id);
     html+=`<div class="sentence" id="sent-${p.id}">`;
     p.words.forEach((w,wi)=>{
       const display=w.syl||w.t;
