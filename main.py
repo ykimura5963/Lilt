@@ -1,13 +1,14 @@
 import os
 import re
 import json
+import string
 import shutil
 import asyncio
 import logging
 import datetime
 import threading
 import time
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Dict
 
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.9.1"
+LILT_VERSION = "1.12.1"
 
 app = FastAPI(title="Lilt API")
 
@@ -80,6 +81,12 @@ class RetranslateRequest(BaseModel):
     translate_provider: str = "ollama"   # ollama | runpod | openrouter | openai
     translate_endpoint: str = ""
     translate_api_key: str = ""
+
+
+class NotesRequest(BaseModel):
+    """チャンク（段落）ごとの自由メモ。キーは段落インデックス（文字列）、値はメモ本文。
+    data.json / data.md とは独立した notes.json に保存するため、再翻訳の影響を受けない。"""
+    notes: Dict[str, str] = {}
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -278,6 +285,23 @@ Output ONLY valid complete JSON in this exact format (same length and order as t
 {"translations":["日本語訳1","日本語訳2"]}"""
 
 
+# 末尾要素の閉じクオートとして現れがちな全角・CJK引用符（一部モデルが " の代わりに出力する）
+_CLOSING_QUOTE_CHARS = "\"'‘’“”「」『』"
+_UNTERMINATED_TAIL_RE = re.compile(rf"^(.*?)([{_CLOSING_QUOTE_CHARS}]*)([\]\}}]+)$", re.DOTALL)
+
+
+def _close_unterminated_string(s: str) -> str:
+    """末尾要素の閉じクオートが欠落・」』等のCJK括弧に化けているケースを補修する。
+    例: ...お礼を言います。」]}  →  ...お礼を言います。」"]}"""
+    m = _UNTERMINATED_TAIL_RE.match(s)
+    if not m:
+        return s
+    body, quote, tail = m.group(1), m.group(2), m.group(3)
+    if quote.endswith('"'):
+        return s
+    return body + quote + '"' + tail
+
+
 def _parse_translations(raw: str) -> list:
     """LLM応答から訳文リストを取り出す。
     {"translations":[...]} / 素の配列 [...] / 末尾欠けの補修 に対応。"""
@@ -293,19 +317,24 @@ def _parse_translations(raw: str) -> list:
 
     data = None
     for c in (cand_fixed, cand):
-        try:
-            # strict=False: 文字列内の生の改行/タブなど制御文字を許容
-            data = json.loads(c, strict=False)
-            break
-        except json.JSONDecodeError:
-            for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
-                try:
-                    data = json.loads(c + suffix, strict=False)
-                    break
-                except json.JSONDecodeError:
-                    continue
+        closed = _close_unterminated_string(c)
+        variants = [closed, c] if closed != c else [c]
+        for variant in variants:
+            try:
+                # strict=False: 文字列内の生の改行/タブなど制御文字を許容
+                data = json.loads(variant, strict=False)
+                break
+            except json.JSONDecodeError:
+                for suffix in (']', '"]', ']}', '"]}', '"}]}'):   # 末尾切れの補修
+                    try:
+                        data = json.loads(variant + suffix, strict=False)
+                        break
+                    except json.JSONDecodeError:
+                        continue
             if data is not None:
                 break
+        if data is not None:
+            break
     if data is None:
         raise ValueError(f"JSON解析不可（{len(cand)}字）")
 
@@ -920,6 +949,41 @@ async def list_projects(root: Optional[str] = Query(None)):
     return results
 
 
+@app.get("/list-dirs")
+async def list_dirs(path: Optional[str] = Query(None)):
+    """ローカルファイルシステムのフォルダを列挙（PCの「動画を開く」フォルダ選択用）。
+    127.0.0.1 バインドのローカル単一ユーザー前提（自分のマシンのフォルダを選ぶための機能）。
+    path 未指定: Windowsはドライブ一覧、POSIXは "/" を起点に列挙する。"""
+    p = (path or "").strip()
+    if not p:
+        if os.name == "nt":
+            drives = [{"name": f"{c}:\\", "path": f"{c}:\\", "is_project": False}
+                      for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")]
+            return {"path": "", "parent": None, "dirs": drives, "is_root": True}
+        p = "/"
+    target = os.path.realpath(p)
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=400, detail=f"フォルダが見つかりません: {target}")
+    try:
+        dirs = []
+        for name in sorted(os.listdir(target), key=str.lower):
+            full = os.path.join(target, name)
+            if os.path.isdir(full):
+                try:
+                    is_project = os.path.isfile(os.path.join(full, "data.json"))
+                except OSError:
+                    is_project = False
+                dirs.append({"name": name, "path": full, "is_project": is_project})
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="アクセス権限がありません")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    parent = os.path.dirname(target)
+    if parent == target:                          # ドライブ直下(C:\)やルート(/)
+        parent = "" if os.name == "nt" else None  # Windowsは「上へ」でドライブ一覧へ
+    return {"path": target, "parent": parent, "dirs": dirs, "is_root": False}
+
+
 @app.get("/library-file")
 async def library_file(
     root: str = Query(...),
@@ -938,6 +1002,36 @@ async def library_file(
     if not os.path.isfile(target):
         raise HTTPException(status_code=404, detail="ファイルが見つかりません")
     return FileResponse(target)
+
+
+@app.post("/notes/{video_id}")
+async def save_notes(video_id: str, request: NotesRequest, root: Optional[str] = Query(None)):
+    """チャンクごとの自由メモを動画フォルダの notes.json に保存する。
+    data.json / data.md とは別ファイルのため再翻訳・再生成で上書きされない。
+    読み込みは既存の /files・/library-file（notes.json）を流用する。"""
+    if not re.match(r"^[A-Za-z0-9_.\-]+$", video_id):
+        raise HTTPException(status_code=400, detail="無効なvideo_idです")
+    base   = _resolve_root(root)
+    target = os.path.realpath(os.path.join(base, video_id))
+    # video_id フォルダが base 配下にあることを保証（ディレクトリトラバーサル防止）
+    if os.path.commonpath([base, target]) != base:
+        raise HTTPException(status_code=400, detail="不正なパスです")
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=404, detail="プロジェクトが見つかりません")
+    # 空文字のメモは保存しない（notes.json を綺麗に保つ）
+    notes = {k: v for k, v in request.notes.items() if (v or "").strip()}
+    payload = {
+        "version":     "1",
+        "contentBase": video_id,
+        "updatedAt":   datetime.datetime.utcnow().isoformat() + "Z",
+        "notes":       notes,
+    }
+    try:
+        with open(os.path.join(target, "notes.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"メモの保存に失敗しました: {e}")
+    return {"status": "saved", "video_id": video_id, "count": len(notes)}
 
 
 @app.delete("/projects/{video_id}")
@@ -1114,15 +1208,19 @@ async def process_youtube(request: ProcessRequest, http_request: Request):
             translate_dest = request.ollama_url
         logger.info(f"Translation provider: {_provider} | model={translate_model} | endpoint={translate_dest}")
 
-        WINDOW = 12
+        # ローカル小型モデル（gemma 12b q4 等）はJSON配列が長いほど構造を崩しやすい。
+        # 1リクエストの件数を絞り、応答を短く保って解析失敗自体を減らす。
+        WINDOW = 6
         windows = [paragraphs_raw[i:i+WINDOW] for i in range(0, len(paragraphs_raw), WINDOW)]
         for wi, window in enumerate(windows):
             pct = 25 + int((wi / max(len(windows), 1)) * 58)   # 25 → 83%
             yield send({"type": "progress", "stage": "llm", "pct": pct,
                         "msg": f"日本語訳を生成中（{_llm_label}）... {wi+1}/{len(windows)}"})
             cancel_event = threading.Event()
+            # _translate_window_safe: JSON解析失敗・件数不足なら二分割で再試行し、
+            # 最終的に1文ずつ素のテキストで訳す（ウィンドウ全滅を防ぐ）。
             fut = loop.run_in_executor(
-                None, _translate_window, window,
+                None, _translate_window_safe, window,
                 _provider, request.ollama_url, translate_model,
                 request.translate_endpoint, request.translate_api_key, cancel_event,
             )
@@ -1246,7 +1344,7 @@ async def retranslate(video_id: str, request: RetranslateRequest, http_request: 
             except Exception as e:
                 logger.warning(f"retranslate の保存に失敗: {e}")
 
-        WINDOW  = 12
+        WINDOW  = 6   # 生成側と同様、応答を短く保ち解析失敗を減らす
         windows = [paras[i:i+WINDOW] for i in range(0, len(paras), WINDOW)]
         filled  = 0
         for wi, window in enumerate(windows):

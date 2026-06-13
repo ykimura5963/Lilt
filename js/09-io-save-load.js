@@ -126,6 +126,8 @@ async function tryAutoLoadAnnotation(base){
           window.PARAS.push(p);
         });
         totalDur = data.paras[data.paras.length-1]?.end || totalDur;
+        /* チャンクメモ（notes.json）を描画前に読み込む */
+        if(typeof loadNotesFSA==='function') await loadNotesFSA(targetDir);
         renderTranscript();
         jsonLoaded = true;
         showToast(`✓ ${fname} を自動読み込みしました`, false, 3000);
@@ -173,8 +175,10 @@ function refreshFolderStatus(){
   const el=document.getElementById('folder-status');
   if(!el) return;
   if(!fsaSupported()){
-    el.textContent='非対応ブラウザ — ダウンロード保存／ファイル選択読込で動作します';
-    el.className='gen-status';
+    el.innerHTML='⚠ このブラウザ/URLではフォルダ保存が使えません。<br>'
+      +'Chrome / Edge で <b>http://localhost</b> または <b>http://127.0.0.1</b> から開いてください'
+      +'（LAN IP・ホスト名・file:// は不可。Firefox/Safari も非対応）。';
+    el.className='gen-status err';
   }else if(fsaDirHandle){
     el.textContent='✓ 親フォルダ: '+fsaDirHandle.name;
     el.className='gen-status ok';

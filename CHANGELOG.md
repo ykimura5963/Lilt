@@ -20,6 +20,59 @@
 
 ---
 
+## [1.12.1] - 2026-06-14
+
+### Changed（変更）
+- **スマホの本文表示を高密度化**。英文（`.wt`）を 15px→**13px**（-15%）、日本語訳（`.ja-line`）を 12px→**10px**（-20%）に縮小し、行間も圧縮（英文の行間 `row-gap` 12px→10px、日本語訳の `line-height` 1.8→1.45）。
+- **スマホの「動画を開く」を2段構えに変更**。押下時にいきなりOSのフォルダ選択ダイアログを開かず、まずライブラリのモーダルを表示して「📁 親フォルダを選択」ボタン→選択後に動画一覧を表示（PCのライブラリと同じ操作感）。
+
+### Fixed（修正）
+- **スマホの追従スクロールの行き過ぎを修正**。上部に固定した動画の裏へ現在行が隠れる/通り過ぎる問題を、`scrollIntoView` をスマホでは `block:'start'` にし、`.para` に固定スタック高さぶんの `scroll-margin-top` を付与して、現在行が固定動画の直下に収まるよう調整。
+
+---
+
+## [1.12.0] - 2026-06-14
+
+### Added（追加）
+- **メモのエクスポート/インポート**。書き戻しができない環境（スマホのローカルフォルダ読込など）でも、メモを端末の localStorage に保存して編集できるように。ファイルバーに「📤 メモ書き出し」「📥 メモ取込」ボタンを追加し、`notes.json` 形式でPC↔スマホ間のメモ橋渡しが可能。
+- **PCの「動画を開く」フォルダ選択UI**。バックエンドに `GET /list-dirs` を追加し、ライブラリのルートフォルダをパス入力なしにフォルダブラウザから選択可能に（📁 フォルダ選択）。
+
+### Changed（変更）
+- **スマホの再生コントロールを動画下に固定**。再生/停止・プログレスバー・時刻表示を `.play-bar` として動画下の専用バーに分離（`backdrop-filter` 配下の `position:fixed` 基準ズレを回避）。視覚レイヤートグル（強勢・抑揚・脱落・リズム・追従）はスマホでは非表示にし、コントロールバーは1段に収めて、はみ出す場合は横スクロール。
+- スマホ・タッチ環境では hover が無いため「＋ メモ」トリガーを常時表示。
+
+---
+
+## [1.11.0] - 2026-06-13
+
+### Added（追加）
+- **スマホ（Android）向けローカルプレイヤー**。スマホでは「動画を開く」が端末ローカルの親フォルダ選択（`<input webkitdirectory>`）になり、配下の `data.json` を持つサブフォルダ＝プロジェクトとして一覧表示し、選択時に各ファイル（`video.*` / `data.json` / `notes.json`）を `File` から直接読み込む（バックエンド不要・PCの保存済みプロジェクト一覧と同じ操作感）。メモは読み取り専用で表示のみ。
+
+### Changed（変更）
+- **スマホUIを刷新**。動画を画面上部に固定し、各コントロールをアイコン化して動画上部に半透明オーバーレイ（ラベル非表示・サイズ統一）。ヘッダー高さを 44px→**30px** に縮小（PC含む）。生成系（YouTube自動処理・再翻訳・アノテーション生成・設定）はスマホでは非表示のまま（フル機能はPC専用）。スマホの凡例アコーディオンはコメントアウト（PCサイドバーの凡例タブは維持）。
+- **「ファイルから」ボタンを廃止**。動画読込の導線を「動画を開く」に集約（PCはバックエンドのライブラリ、スマホは端末ローカルフォルダ）。
+
+### Fixed（修正）
+- 設定タブの「親フォルダを選択」が押せない理由を明示。File System Access API は **Chrome/Edge かつ `http://localhost` / `http://127.0.0.1`** でのみ利用可（LAN IP・ホスト名・`file://`・Firefox/Safari は不可）の旨をボタン押下時とステータス欄に表示。
+
+---
+
+## [1.10.0] - 2026-06-13
+
+### Added（追加）
+- **チャンクごとの自由メモ機能**。各段落のボタン列とアノテーションの間にメモ欄を配置。未入力時は hover でのみ「＋ メモ」トリガーを表示し、入力中はデバウンスで自動保存する。保存先は動画フォルダの `notes.json`（`data.json` / `data.md` とは独立）で、**再翻訳・再生成でメモが消えない**。バックエンド `POST /notes/{video_id}` を追加（読み込みは既存の `/files`・`/library-file` を流用）。
+
+---
+
+## [1.9.2] - 2026-06-13
+
+### Fixed（修正）
+- **翻訳JSONの解析失敗を削減**。`gemma4:e4b` など一部モデルが訳文の末尾を JSON の閉じクオート `"` ではなく `」』` 等のCJK括弧で終端してしまい解析不能になるケースを補修する処理を追加（`_close_unterminated_string`）。
+- **翻訳ウィンドウの堅牢化**。生成・再翻訳の本処理が解析失敗時のフォールバックを持たない `_translate_window` を直接呼んでおり、JSONが壊れると当該ウィンドウ（最大12段落）がまるごと英語のまま残っていた。二分割で再試行し最終的に1文ずつ素のテキストで訳す `_translate_window_safe` に統一し、併せて1リクエストの段落数を **12→6** に縮小（ローカル小型モデルで応答が長くなるほどJSON構造が崩れやすいため、解析失敗の発生自体を抑制）。
+- **右上のタイトル表示**。保存済みプロジェクトを読み込んだ際、ヘッダー右上に `video_id` ではなくライブラリ一覧と同じ動画タイトルを表示するよう修正。
+
+---
+
 ## [1.9.1] - 2026-06-10
 
 ### Changed（変更）
@@ -184,17 +237,17 @@
 - **インフラ**：`start.bat` ワンクリック起動（ffmpeg 自動導入 → Ollama 起動＋CPU 推論チューニング → サーバ／ブラウザ起動）、コード分割（`index.html` ＋ `styles.css` ＋ `js/01〜10`）、`ALLOWED_ORIGINS` による CORS 制限、ffmpeg プリフライトチェック。
 - **モバイル版**：プレイヤー専用のレスポンシブ表示（カラオケ同期・アノテーション表示に対応）。
 
-[Unreleased]: https://github.com/ykimura5963/Lilt/compare/v1.9.1...HEAD
-[1.9.1]: https://github.com/ykimura5963/Lilt/compare/v1.9.0...v1.9.1
-[1.9.0]: https://github.com/ykimura5963/Lilt/compare/v1.8.0...v1.9.0
-[1.8.0]: https://github.com/ykimura5963/Lilt/compare/v1.7.1...v1.8.0
-[1.7.1]: https://github.com/ykimura5963/Lilt/compare/v1.7.0...v1.7.1
-[1.7.0]: https://github.com/ykimura5963/Lilt/compare/v1.6.0...v1.7.0
-[1.6.0]: https://github.com/ykimura5963/Lilt/compare/v1.5.0...v1.6.0
-[1.5.0]: https://github.com/ykimura5963/Lilt/compare/v1.4.1...v1.5.0
-[1.4.1]: https://github.com/ykimura5963/Lilt/compare/v1.4.0...v1.4.1
-[1.4.0]: https://github.com/ykimura5963/Lilt/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/ykimura5963/Lilt/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/ykimura5963/Lilt/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/ykimura5963/Lilt/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/ykimura5963/Lilt/releases/tag/v1.0.0
+[Unreleased]: https://github.com/yuna5963/Lilt/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/yuna5963/Lilt/compare/v1.9.0...v1.9.1
+[1.9.0]: https://github.com/yuna5963/Lilt/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/yuna5963/Lilt/compare/v1.7.1...v1.8.0
+[1.7.1]: https://github.com/yuna5963/Lilt/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/yuna5963/Lilt/compare/v1.6.0...v1.7.0
+[1.6.0]: https://github.com/yuna5963/Lilt/compare/v1.5.0...v1.6.0
+[1.5.0]: https://github.com/yuna5963/Lilt/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/yuna5963/Lilt/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/yuna5963/Lilt/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/yuna5963/Lilt/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/yuna5963/Lilt/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/yuna5963/Lilt/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/yuna5963/Lilt/releases/tag/v1.0.0

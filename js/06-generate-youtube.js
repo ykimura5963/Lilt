@@ -48,6 +48,7 @@ async function loadYouTubeProjects(){
     const resp = await fetch(`${bkUrl}/projects`);
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const projects = await resp.json();
+    window._ytProjects = projects;
     if(!projects.length){
       listEl.innerHTML = '<span style="font-size:11px;color:var(--muted);font-family:var(--mono)">保存済みプロジェクトなし</span>';
       return;
@@ -92,6 +93,10 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
   });
   const lastPara = PARAS[PARAS.length-1];
   if(lastPara) totalDur = lastPara.end;
+
+  /* チャンクメモ（notes.json）を描画前に読み込む */
+  if(typeof loadNotes==='function') await loadNotes({ mode:'backend', bkUrl, root: root||'', id });
+
   renderTranscript();
 
   /* 動画をバックエンドURLから読み込む（ネイティブcontrolsは非表示） */
@@ -104,7 +109,7 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
   document.getElementById('yt-wrap').style.display    = 'none';
   document.getElementById('no-file').style.display = 'none';
   document.getElementById('file-name').textContent  = label || id;
-  document.getElementById('header-sub').textContent = data.contentBase || label || id;
+  document.getElementById('header-sub').textContent = label || data.contentBase || id;
   currentBase = id;
 
   /* data.md も取得して Generate テキストエリアへ */
@@ -123,9 +128,10 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
 /* ── 指定プロジェクト（既定 projects/）を読み込む（生成タブの一覧から） ── */
 async function loadYouTubeProject(videoId){
   const bkUrl = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const title = (window._ytProjects||[]).find(p=>p.video_id===videoId)?.title || videoId;
   try{
-    const n = await loadProjectBundle(bkUrl, '', videoId, 'video.mp4', videoId);
-    showToast(`✓ ${videoId} を読み込みました（${n}段落）`, false, 4000);
+    const n = await loadProjectBundle(bkUrl, '', videoId, 'video.mp4', title);
+    showToast(`✓ ${title} を読み込みました（${n}段落）`, false, 4000);
   }catch(err){
     showToast('読み込みエラー: '+err.message, true, 5000);
   }
@@ -134,12 +140,80 @@ async function loadYouTubeProject(videoId){
 /* ══ 動画ライブラリ（「動画を開く」） ══ */
 function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function openLibrary(){
+  /* スマホ（生成系なし・バックエンド非依存）は端末ローカルのライブラリに分岐。
+     いきなりOSのフォルダ選択を出さず、まずモーダルを開いて「親フォルダを選択」
+     ボタン→選択後に動画一覧、の2段構えにする。*/
+  if(window.matchMedia('(max-width:640px)').matches && typeof openLocalLibrary==='function'){
+    openLocalLibrary();
+    return;
+  }
+  /* PC: バックエンド経由のライブラリ */
+  const descEl = document.getElementById('lib-desc');     if(descEl) descEl.style.display='';
+  const rootRow = document.getElementById('lib-root-row'); if(rootRow) rootRow.style.display='';
   document.getElementById('lib-modal').style.display='flex';
   loadLibraryIndex();
 }
 function closeLibrary(){
   document.getElementById('lib-modal').style.display='none';
 }
+
+/* ══ サーバ側フォルダブラウザ（PC：ルートフォルダをパス入力せず選べる） ══
+   バックエンドの /list-dirs でローカルFSを辿る。ブラウザのFSA非依存＝全デスクトップ
+   ブラウザで動作。パスはHTMLに埋め込まず window._dirBrowse のindexで参照する。*/
+async function openDirBrowser(startPath){
+  const bkUrl    = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const statusEl = document.getElementById('lib-status');
+  const listEl   = document.getElementById('lib-list');
+  statusEl.textContent='フォルダ取得中...'; statusEl.className='gen-status';
+  try{
+    const path = (startPath||'').trim();
+    const url  = `${bkUrl}/list-dirs` + (path ? `?path=${encodeURIComponent(path)}` : '');
+    const resp = await fetch(url);
+    if(!resp.ok){
+      let msg='HTTP '+resp.status;
+      try{ const e=await resp.json(); if(e.detail) msg=e.detail; }catch(_){}
+      throw new Error(msg);
+    }
+    const data = await resp.json();
+    window._dirBrowse = data;
+    statusEl.textContent = data.path || 'ドライブを選択'; statusEl.className='gen-status';
+    let html = '<div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">';
+    if(data.parent!==null && data.parent!==undefined)
+      html += `<button class="md-btn" onclick="openDirBrowserParent()">↑ 上へ</button>`;
+    if(!data.is_root && data.path)
+      html += `<button class="file-btn" onclick="selectBrowsedDir()">✓ このフォルダを選択</button>`;
+    html += `<button class="md-btn" onclick="loadLibraryIndex()" title="フォルダ選択をやめて一覧へ戻る">✕ 中止</button>`;
+    html += '</div>';
+    if(!data.dirs.length){
+      html += '<div style="font-size:11px;color:var(--muted);font-family:var(--mono);padding:4px">サブフォルダなし</div>';
+    } else {
+      html += data.dirs.map((d,i)=>`
+        <div class="lib-item" style="cursor:pointer" onclick="openDirBrowserChild(${i})">
+          <span class="lib-name">📁 ${_esc(d.name)}${d.is_project?' <span style="color:var(--accent)" title="プロジェクト（data.jsonあり）">●</span>':''}</span>
+        </div>`).join('');
+    }
+    listEl.innerHTML = html;
+  }catch(err){
+    statusEl.textContent='フォルダ取得失敗: '+err.message+'（バックエンドが起動していますか？）';
+    statusEl.className='gen-status err';
+  }
+}
+function openDirBrowserChild(i){
+  const d = window._dirBrowse;
+  if(d && d.dirs && d.dirs[i]) openDirBrowser(d.dirs[i].path);
+}
+function openDirBrowserParent(){
+  const d = window._dirBrowse;
+  if(d && d.parent!==null && d.parent!==undefined) openDirBrowser(d.parent);
+}
+function selectBrowsedDir(){
+  const d = window._dirBrowse;
+  if(!d || !d.path) return;
+  const rootInput = document.getElementById('lib-root');
+  if(rootInput) rootInput.value = d.path;
+  loadLibraryIndex();   /* 選択フォルダをルートにプロジェクト一覧へ */
+}
+
 async function loadLibraryIndex(){
   const bkUrl    = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
   const root     = document.getElementById('lib-root')?.value?.trim() || '';
@@ -642,7 +716,7 @@ function settingsHTML(){
   <div class="gen-section">
     <div class="gen-label">親フォルダ（保存先）</div>
     <div class="gen-row">
-      <button class="gen-btn danger" id="folder-pick-btn" onclick="selectSaveFolder()" ${fsa?'':'disabled style="opacity:.5;cursor:not-allowed"'}>📁 親フォルダを選択</button>
+      <button class="gen-btn danger" id="folder-pick-btn" onclick="selectSaveFolder()" ${fsa?'':'style="opacity:.6"'}>📁 親フォルダを選択</button>
       <button class="gen-btn danger" onclick="clearSaveFolder()" style="font-size:10px">解除</button>
     </div>
     <div class="gen-status" id="folder-status"></div>
@@ -705,7 +779,7 @@ async function testOllamaConnection(){
 /* ── 親フォルダ選択（FSA API・非対応ブラウザはダウンロード保存にフォールバック） ── */
 async function selectSaveFolder(){
   if(!fsaSupported()){
-    showToast('このブラウザはフォルダ保存に非対応です（Chrome/Edge推奨）。\n保存はダウンロードになります。',false,4500);
+    showToast('フォルダ保存が使えません。\nChrome / Edge で http://localhost か http://127.0.0.1 から開いてください\n（LAN IP・ホスト名・file:// は不可）。',true,6000);
     return;
   }
   try{
