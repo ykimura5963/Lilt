@@ -95,8 +95,10 @@ header{
 .ctrl-btn.on{background:rgba(245,200,66,.1);color:var(--accent);border-color:rgba(245,200,66,.3)}
 .ctrl-btn .ico{display:inline-flex;align-items:center;justify-content:center;line-height:1}
 /* デスクトップではアイコン＋ラベル両方表示（モバイルでラベルを隠す） */
-/* 再生コントロール群: PCは display:contents で ctrl-bar の行内に展開（従来見た目） */
-.play-bar{display:contents}
+/* 再生コントロール群（再生/停止/スライダー/時刻）: PCでは常に独立した2段目へ。
+   flex:1 1 100% で必ず全幅を取らせ、トグル群と同じ行に紛れない（再生ボタンだけ
+   1段目末尾に残る問題を防ぐ）。スマホは @media 内で動画下に position:fixed。*/
+.play-bar{display:flex;align-items:center;gap:6px;flex:1 1 100%;width:100%}
 .play-ctrl{font-size:13px;padding:4px 11px;color:var(--text)}
 .play-ctrl:hover{color:var(--accent);border-color:rgba(245,200,66,.35);background:rgba(245,200,66,.08)}
 .spd{font-family:var(--mono);font-size:11px;background:var(--surf2);border:.5px solid var(--bd2);color:var(--text);border-radius:5px;padding:4px 6px;cursor:pointer}
