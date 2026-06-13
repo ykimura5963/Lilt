@@ -82,11 +82,73 @@ async function persistNotes(){
       if(!resp.ok) throw new Error('HTTP ' + resp.status);
     }else if(ctx.mode === 'fsa'){
       await _saveNotesFSA(notes);
+    }else if(ctx.mode === 'localstorage'){
+      /* スマホ等（書き戻し不可）: ブラウザ内ストレージに端末ローカル保存。
+         将来のアカウント同期では _noteCtx.mode='cloud' を足してここに分岐を追加する。*/
+      _saveNotesLS(ctx.id, notes);
     }
     _flashNoteSaved();
   }catch(e){
     showToast('メモの保存に失敗: ' + e.message, true, 3000);
   }
+}
+
+/* ══ ブラウザ内ストレージ（localStorage）：端末ローカルのメモ保存 ══
+   キーは video_id（フォルダ名）。練習統計 'lilt.shadow.<id>' と同じ方式。*/
+function _notesLSKey(id){ return 'lilt.notes.' + (id || 'unknown'); }
+function _loadNotesLS(id){
+  try{ return JSON.parse(localStorage.getItem(_notesLSKey(id))) || {}; }
+  catch(e){ return {}; }
+}
+function _hasNotesLS(id){ return localStorage.getItem(_notesLSKey(id)) != null; }
+function _saveNotesLS(id, notes){
+  try{ localStorage.setItem(_notesLSKey(id), JSON.stringify(notes)); }catch(e){}
+}
+/* NOTES に index→text のマップを重ねる（読み込み・インポート共用） */
+function _mergeNotesMap(map){
+  if(!map || typeof map !== 'object') return;
+  Object.keys(map).forEach(k=>{
+    const t = map[k];
+    if(t != null && String(t).trim()) NOTES[Number(k)] = String(t);
+  });
+}
+
+/* ── メモを notes.json としてダウンロード（スマホ→PC/フォルダへの橋渡し） ── */
+function exportNotes(){
+  const id = (typeof currentBase !== 'undefined' && currentBase) || 'notes';
+  const notes = {};
+  Object.keys(NOTES).forEach(k=>{ const t = (NOTES[k]||'').trim(); if(t) notes[k] = t; });
+  if(!Object.keys(notes).length){ showToast('書き出すメモがありません', false, 2500); return; }
+  const blob = new Blob([JSON.stringify({
+    version: '1', contentBase: id, updatedAt: new Date().toISOString(), notes,
+  }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = id + '.notes.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast(`✓ ${id}.notes.json を書き出しました`, false, 3000);
+}
+
+/* ── notes.json を読み込んで現在のメモにマージ → 保存・再描画 ── */
+function importNotesFile(input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e=>{
+    try{
+      const data = JSON.parse(e.target.result);
+      const map = (data && data.notes) ? data.notes : data;   /* {notes:{}} / 素の{} 両対応 */
+      _mergeNotesMap(map);
+      if(typeof renderTranscript === 'function') renderTranscript();
+      _scheduleSaveNotes();   /* 現在の保存先（localStorage/backend/fsa）へ反映 */
+      showToast('✓ メモを読み込みました', false, 3000);
+    }catch(err){
+      showToast('メモの読み込みに失敗: ' + err.message, true, 4000);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
 }
 
 /* ── FSA 書き込み（動画名サブフォルダの notes.json） ── */

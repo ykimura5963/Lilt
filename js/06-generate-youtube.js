@@ -154,6 +154,64 @@ function openLibrary(){
 function closeLibrary(){
   document.getElementById('lib-modal').style.display='none';
 }
+
+/* ══ サーバ側フォルダブラウザ（PC：ルートフォルダをパス入力せず選べる） ══
+   バックエンドの /list-dirs でローカルFSを辿る。ブラウザのFSA非依存＝全デスクトップ
+   ブラウザで動作。パスはHTMLに埋め込まず window._dirBrowse のindexで参照する。*/
+async function openDirBrowser(startPath){
+  const bkUrl    = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
+  const statusEl = document.getElementById('lib-status');
+  const listEl   = document.getElementById('lib-list');
+  statusEl.textContent='フォルダ取得中...'; statusEl.className='gen-status';
+  try{
+    const path = (startPath||'').trim();
+    const url  = `${bkUrl}/list-dirs` + (path ? `?path=${encodeURIComponent(path)}` : '');
+    const resp = await fetch(url);
+    if(!resp.ok){
+      let msg='HTTP '+resp.status;
+      try{ const e=await resp.json(); if(e.detail) msg=e.detail; }catch(_){}
+      throw new Error(msg);
+    }
+    const data = await resp.json();
+    window._dirBrowse = data;
+    statusEl.textContent = data.path || 'ドライブを選択'; statusEl.className='gen-status';
+    let html = '<div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">';
+    if(data.parent!==null && data.parent!==undefined)
+      html += `<button class="md-btn" onclick="openDirBrowserParent()">↑ 上へ</button>`;
+    if(!data.is_root && data.path)
+      html += `<button class="file-btn" onclick="selectBrowsedDir()">✓ このフォルダを選択</button>`;
+    html += `<button class="md-btn" onclick="loadLibraryIndex()" title="フォルダ選択をやめて一覧へ戻る">✕ 中止</button>`;
+    html += '</div>';
+    if(!data.dirs.length){
+      html += '<div style="font-size:11px;color:var(--muted);font-family:var(--mono);padding:4px">サブフォルダなし</div>';
+    } else {
+      html += data.dirs.map((d,i)=>`
+        <div class="lib-item" style="cursor:pointer" onclick="openDirBrowserChild(${i})">
+          <span class="lib-name">📁 ${_esc(d.name)}${d.is_project?' <span style="color:var(--accent)" title="プロジェクト（data.jsonあり）">●</span>':''}</span>
+        </div>`).join('');
+    }
+    listEl.innerHTML = html;
+  }catch(err){
+    statusEl.textContent='フォルダ取得失敗: '+err.message+'（バックエンドが起動していますか？）';
+    statusEl.className='gen-status err';
+  }
+}
+function openDirBrowserChild(i){
+  const d = window._dirBrowse;
+  if(d && d.dirs && d.dirs[i]) openDirBrowser(d.dirs[i].path);
+}
+function openDirBrowserParent(){
+  const d = window._dirBrowse;
+  if(d && d.parent!==null && d.parent!==undefined) openDirBrowser(d.parent);
+}
+function selectBrowsedDir(){
+  const d = window._dirBrowse;
+  if(!d || !d.path) return;
+  const rootInput = document.getElementById('lib-root');
+  if(rootInput) rootInput.value = d.path;
+  loadLibraryIndex();   /* 選択フォルダをルートにプロジェクト一覧へ */
+}
+
 async function loadLibraryIndex(){
   const bkUrl    = document.getElementById('yt-backend-url')?.value?.trim() || ytBackendUrl;
   const root     = document.getElementById('lib-root')?.value?.trim() || '';

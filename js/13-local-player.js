@@ -117,13 +117,18 @@ async function loadProjectBundleLocal(proj){
   const lastPara = PARAS[PARAS.length - 1];
   if(lastPara) totalDur = lastPara.end;
 
-  /* チャンクメモ（notes.json があれば表示。ローカルは読み取り専用 → 保存は無効） */
+  /* チャンクメモ: フォルダの notes.json（読み取り専用）を基に、端末ローカル（localStorage）の
+     編集分を重ねる。編集の保存先は localStorage（書き戻し不可のため）。 */
   NOTES = {};
-  window._noteCtx = null;
   const notesFile = proj.files['notes.json'];
   if(notesFile && typeof _applyNotesText === 'function'){
     try{ _applyNotesText(await notesFile.text()); }catch(e){ /* メモ無し扱い */ }
   }
+  if(typeof _loadNotesLS === 'function'){
+    /* localStorage に編集履歴があればそれを優先で重ねる（保存時は全件書き出しのため最新状態） */
+    _mergeNotesMap(_loadNotesLS(proj.id));
+  }
+  window._noteCtx = { mode: 'localstorage', id: proj.id };
 
   renderTranscript();
 

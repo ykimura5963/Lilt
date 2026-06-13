@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import string
 import shutil
 import asyncio
 import logging
@@ -21,7 +22,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.11.0"
+LILT_VERSION = "1.12.0"
 
 app = FastAPI(title="Lilt API")
 
@@ -946,6 +947,41 @@ async def list_projects(root: Optional[str] = Query(None)):
             "has_data":   has_data,
         })
     return results
+
+
+@app.get("/list-dirs")
+async def list_dirs(path: Optional[str] = Query(None)):
+    """ローカルファイルシステムのフォルダを列挙（PCの「動画を開く」フォルダ選択用）。
+    127.0.0.1 バインドのローカル単一ユーザー前提（自分のマシンのフォルダを選ぶための機能）。
+    path 未指定: Windowsはドライブ一覧、POSIXは "/" を起点に列挙する。"""
+    p = (path or "").strip()
+    if not p:
+        if os.name == "nt":
+            drives = [{"name": f"{c}:\\", "path": f"{c}:\\", "is_project": False}
+                      for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")]
+            return {"path": "", "parent": None, "dirs": drives, "is_root": True}
+        p = "/"
+    target = os.path.realpath(p)
+    if not os.path.isdir(target):
+        raise HTTPException(status_code=400, detail=f"フォルダが見つかりません: {target}")
+    try:
+        dirs = []
+        for name in sorted(os.listdir(target), key=str.lower):
+            full = os.path.join(target, name)
+            if os.path.isdir(full):
+                try:
+                    is_project = os.path.isfile(os.path.join(full, "data.json"))
+                except OSError:
+                    is_project = False
+                dirs.append({"name": name, "path": full, "is_project": is_project})
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="アクセス権限がありません")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    parent = os.path.dirname(target)
+    if parent == target:                          # ドライブ直下(C:\)やルート(/)
+        parent = "" if os.name == "nt" else None  # Windowsは「上へ」でドライブ一覧へ
+    return {"path": target, "parent": parent, "dirs": dirs, "is_root": False}
 
 
 @app.get("/library-file")

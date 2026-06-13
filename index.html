@@ -30,6 +30,9 @@
         <label class="md-btn" id="md-label" style="display:none">📝 MD読込<input type="file" id="md-file" accept=".md,.txt" style="display:none" onchange="onMdFileLoad(this)"></label>
         <label class="anno-btn" id="anno-bar-label" style="display:none">📂 アノテーション<input type="file" id="anno-bar-input" accept=".json,application/json" style="display:none" onchange="onAnnotationFileLoad(this)"></label>
         <span class="file-name" id="file-name">未選択</span>
+        <!-- メモの書き出し/取込（スマホはフォルダへ書き戻せないため localStorage 保存＋手動橋渡し用） -->
+        <button class="md-btn" id="note-export-btn" onclick="exportNotes()" title="メモを notes.json で書き出し">📤</button>
+        <label class="md-btn" id="note-import-btn" title="notes.json を読み込んでメモに反映">📥<input type="file" id="note-import-input" accept=".json,application/json" style="display:none" onchange="importNotesFile(this)"></label>
       </div>
 
       <div class="video-wrap" id="local-wrap">
@@ -70,10 +73,13 @@
         <option value="600">間0.6s</option><option value="1200" selected>間1.2s</option><option value="2000">間2.0s</option><option value="3000">間3.0s</option>
       </select>
       <button class="ctrl-btn" id="btn-sh-auto" onclick="togglePracticeAuto(this)" title="チャンクを自動で進む連続練習"><span class="ico">⏩</span><span class="lbl">連続</span></button>
-      <button class="ctrl-btn play-ctrl" id="btn-play" onclick="playVideo()" title="再生"><span class="ico">▶</span></button>
-      <button class="ctrl-btn play-ctrl" id="btn-pause" onclick="pauseVideo()" title="停止"><span class="ico">⏸</span></button>
-      <div class="prog-wrap"><div class="prog-bg" id="prog-bg" onclick="seekByClick(event)"><div class="prog-fill" id="prog-fill"></div></div></div>
-      <span class="time-disp" id="time-disp">0:00</span>
+      <!-- 再生コントロール（再生/停止/スライダー/時刻）。PCは display:contents で従来の行内、スマホは動画下に固定。 -->
+      <div class="play-bar" id="play-bar">
+        <button class="ctrl-btn play-ctrl" id="btn-play" onclick="playVideo()" title="再生"><span class="ico">▶</span></button>
+        <button class="ctrl-btn play-ctrl" id="btn-pause" onclick="pauseVideo()" title="停止"><span class="ico">⏸</span></button>
+        <div class="prog-wrap"><div class="prog-bg" id="prog-bg" onclick="seekByClick(event)"><div class="prog-fill" id="prog-fill"></div></div></div>
+        <span class="time-disp" id="time-disp">0:00</span>
+      </div>
     </div>
 
     <!-- ── 練習ステータスバー（練習中のみ表示） ── -->
@@ -130,6 +136,7 @@
     <div id="lib-desc" style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.7">バックエンドの projects/ 配下、または任意の親フォルダ内の各動画フォルダ（動画・data.json・data.md）を一覧から一括読込します。</div>
     <div id="lib-root-row" style="display:flex;gap:6px;align-items:center">
       <input class="gen-input" id="lib-root" placeholder="ルートフォルダ（空=既定 projects）" style="flex:1" onkeydown="if(event.key==='Enter')loadLibraryIndex()">
+      <button class="md-btn" onclick="openDirBrowser(document.getElementById('lib-root').value)" title="親フォルダを選んでルートに設定">📁 フォルダ選択</button>
       <button class="md-btn" onclick="loadLibraryIndex()">↻ 再読込</button>
     </div>
     <div class="gen-status" id="lib-status" style="min-height:16px"></div>
