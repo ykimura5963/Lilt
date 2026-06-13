@@ -22,7 +22,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.12.0"
+LILT_VERSION = "1.12.1"
 
 app = FastAPI(title="Lilt API")
 

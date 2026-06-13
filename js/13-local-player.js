@@ -67,19 +67,39 @@ async function onLocalDirSelected(input){
   renderLocalLibrary();
 }
 
-/* ── 端末ローカルのプロジェクト一覧をライブラリモーダルに表示 ── */
-function renderLocalLibrary(){
+/* ── スマホ: ライブラリモーダルを開く（OSダイアログは出さず、まず一覧/選択UI） ── */
+function openLocalLibrary(){
   /* バックエンド用のルート入力・説明は隠す */
   const descEl  = document.getElementById('lib-desc');     if(descEl)  descEl.style.display = 'none';
   const rootRow = document.getElementById('lib-root-row'); if(rootRow) rootRow.style.display = 'none';
   document.getElementById('lib-modal').style.display = 'flex';
+  renderLocalLibrary();   /* 選択済みなら一覧、未選択ならフォルダ選択を促す */
+}
 
+/* ── 端末ローカルのプロジェクト一覧をライブラリモーダルに表示 ── */
+function renderLocalLibrary(){
   const statusEl = document.getElementById('lib-status');
   const listEl   = document.getElementById('lib-list');
   const items    = window._localProjItems || [];
+
+  /* 常に先頭へ「親フォルダを選択」ボタンを置く（再選択も可能） */
+  const pickBtn = `<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="file-btn" onclick="pickLocalDir()">📁 親フォルダを選択</button>
+    </div>`;
+
+  if(!items.length){
+    statusEl.textContent = '親フォルダを選択してください';
+    statusEl.className    = 'gen-status';
+    listEl.innerHTML = pickBtn +
+      `<div style="font-size:11px;color:var(--muted);font-family:var(--mono);line-height:1.7;padding:4px">`
+      + `端末内の親フォルダを選ぶと、配下の data.json を持つフォルダを動画一覧として表示します。`
+      + `</div>`;
+    return;
+  }
+
   statusEl.textContent = `端末内: ${items.length}件`;
   statusEl.className    = 'gen-status ok';
-  listEl.innerHTML = items.map((p, idx) => `
+  listEl.innerHTML = pickBtn + items.map((p, idx) => `
     <div class="lib-item">
       <span class="lib-name" title="${_esc(p.id)}">${_esc(p.title || p.id)}</span>
       <button class="yt-proj-load" onclick="loadLocalProject(${idx})">読込</button>

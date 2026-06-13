@@ -329,8 +329,16 @@ header{
     height:auto;overflow:visible;min-height:0;
     padding-bottom:2rem;
   }
-  .wt{font-size:15px}
-  .wt-slot{min-height:20px;height:20px}
+  /* ① 行間を約20%圧縮  ② 英文 15px→13px(-15%)・日本語 12px→10px(-20%) */
+  .sentence{row-gap:10px}                                   /* 12px → 約-17% */
+  .wt{font-size:13px}                                       /* 15px → -15% */
+  .wt-slot{min-height:18px;height:18px}
+  .ja-line{font-size:10px;line-height:1.45;               /* 12px→-20%, 1.8→-20% */
+           margin-top:.3rem;padding-top:.3rem}
+
+  /* ③ 追従スクロール: 上部固定スタックの分だけ余白を確保し、現在行が
+     固定動画の真下に収まるようにする（block:'start' と併用、行き過ぎ防止）*/
+  .para{scroll-margin-top:calc(var(--m-header) + var(--m-filebar) + var(--m-video) + var(--m-playbar) + 8px)}
 
   /* タッチでは hover が無いので「＋ メモ」トリガーを常時表示 */
   .para-note-add{display:inline-block}

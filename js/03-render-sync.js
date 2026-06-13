@@ -111,7 +111,12 @@ function syncHighlight(rawSec){
     EL.paraEls.forEach((el,i)=>{ if(el) el.classList.toggle('active',i===ap); });
     EL.jaEls.forEach((el,i)=>{ if(el) el.classList.toggle('on',i===ap); });
     document.querySelectorAll('.pcard').forEach((el,i)=>el.classList.toggle('on',i===ap));
-    if(autoFollow && EL.paraEls[ap]) EL.paraEls[ap].scrollIntoView({behavior:'smooth',block:'center'});
+    if(autoFollow && EL.paraEls[ap]){
+      /* スマホは上部に動画を固定しているため center だと現在行が固定動画の裏へ
+         隠れる/行き過ぎる。start + scroll-margin-top で固定スタック直下に揃える。*/
+      const mob=window.matchMedia('(max-width:640px)').matches;
+      EL.paraEls[ap].scrollIntoView({behavior:'smooth',block:mob?'start':'center'});
+    }
     EL.wordEls.forEach((row,pi)=>{
       row.forEach(el=>{
         if(!el) return;

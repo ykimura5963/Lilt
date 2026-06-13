@@ -140,9 +140,11 @@ async function loadYouTubeProject(videoId){
 /* ══ 動画ライブラリ（「動画を開く」） ══ */
 function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function openLibrary(){
-  /* スマホ（生成系なし・バックエンド非依存）は端末ローカルのフォルダ選択に分岐 */
-  if(window.matchMedia('(max-width:640px)').matches && typeof pickLocalDir==='function'){
-    pickLocalDir();
+  /* スマホ（生成系なし・バックエンド非依存）は端末ローカルのライブラリに分岐。
+     いきなりOSのフォルダ選択を出さず、まずモーダルを開いて「親フォルダを選択」
+     ボタン→選択後に動画一覧、の2段構えにする。*/
+  if(window.matchMedia('(max-width:640px)').matches && typeof openLocalLibrary==='function'){
+    openLocalLibrary();
     return;
   }
   /* PC: バックエンド経由のライブラリ */
