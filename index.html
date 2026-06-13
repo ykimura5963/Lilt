@@ -133,11 +133,12 @@
       <div style="font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.08em">VIDEO LIBRARY</div>
       <button onclick="closeLibrary()" style="font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:5px;border:.5px solid var(--bd2);background:transparent;color:var(--muted);cursor:pointer">閉じる</button>
     </div>
-    <div id="lib-desc" style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.7">バックエンドの projects/ 配下、または任意の親フォルダ内の各動画フォルダ（動画・data.json・data.md）を一覧から一括読込します。</div>
-    <div id="lib-root-row" style="display:flex;gap:6px;align-items:center">
-      <input class="gen-input" id="lib-root" placeholder="ルートフォルダ（空=既定 projects）" style="flex:1" onkeydown="if(event.key==='Enter')loadLibraryIndex()">
-      <button class="md-btn" onclick="openDirBrowser(document.getElementById('lib-root').value)" title="親フォルダを選んでルートに設定">📁 フォルダ選択</button>
+    <div id="lib-desc" style="font-size:10px;color:var(--muted);font-family:var(--mono);line-height:1.7">バックエンドの projects/ 配下、または任意の親フォルダ内の各動画フォルダ（動画・data.json・data.md）を一覧から一括読込します。<br>バックエンドを使わない場合は「📂 フォルダから開く」で親フォルダを選択（video_index.json があれば優先、無ければ data.json を走査）。</div>
+    <div id="lib-root-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <input class="gen-input" id="lib-root" placeholder="ルートフォルダ（空=既定 projects）" style="flex:1;min-width:140px" onkeydown="if(event.key==='Enter')loadLibraryIndex()">
+      <button class="md-btn" onclick="openDirBrowser(document.getElementById('lib-root').value)" title="親フォルダを選んでルートに設定（バックエンド経由）">📁 フォルダ選択</button>
       <button class="md-btn" onclick="loadLibraryIndex()">↻ 再読込</button>
+      <button class="md-btn" onclick="pickLocalDir()" title="バックエンド不要。端末の親フォルダを選び、video_index.json / data.json から一覧化">📂 フォルダから開く（BE不要）</button>
     </div>
     <div class="gen-status" id="lib-status" style="min-height:16px"></div>
     <div id="lib-list" style="overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
