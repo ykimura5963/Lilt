@@ -211,7 +211,6 @@ async function loadProjectBundleLocal(proj){
   if(typeof applyPlaybackSpeed === 'function') applyPlaybackSpeed();
   document.getElementById('local-wrap').style.display = '';
   document.getElementById('yt-wrap').style.display    = 'none';
-  document.getElementById('no-file').style.display    = media ? 'none' : 'flex';
   document.getElementById('file-name').textContent  = proj.title || proj.id;
   document.getElementById('header-sub').textContent = proj.title || proj.id;
   currentBase = proj.id;

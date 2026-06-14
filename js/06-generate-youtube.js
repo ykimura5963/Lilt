@@ -107,7 +107,6 @@ async function loadProjectBundle(bkUrl, root, id, videoFile, label){
   if(typeof applyPlaybackSpeed==='function') applyPlaybackSpeed();
   document.getElementById('local-wrap').style.display = '';
   document.getElementById('yt-wrap').style.display    = 'none';
-  document.getElementById('no-file').style.display = 'none';
   document.getElementById('file-name').textContent  = label || id;
   document.getElementById('header-sub').textContent = label || data.contentBase || id;
   currentBase = id;
