@@ -8,7 +8,6 @@ document.getElementById('local-file').addEventListener('change',function(){
   vid.src=URL.createObjectURL(file);
   vid.load(); vid.controls=false;
   applyPlaybackSpeed();   /* 保存済み速度＋ピッチ保持を適用（loadで1.0にリセットされるため） */
-  document.getElementById('no-file').style.display='none';
   document.getElementById('file-name').textContent=file.name;
   document.getElementById('header-sub').textContent=file.name;
   document.getElementById('local-wrap').style.display='';

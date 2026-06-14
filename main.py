@@ -22,7 +22,7 @@ import requests as http_requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LILT_VERSION = "1.12.1"
+LILT_VERSION = "1.13.2"
 
 app = FastAPI(title="Lilt API")
 
@@ -929,6 +929,50 @@ def _read_title(proj_dir: str, fallback: str) -> str:
     return fallback
 
 
+VIDEO_INDEX_NAME = "video_index.json"
+
+
+def _scan_projects(root: str) -> list:
+    """root 直下のサブフォルダを走査し、data.json を持つものをプロジェクトとして列挙。
+    video_index.json（バックエンド無しでもフロントが一覧化できる静的インデックス）用。"""
+    out = []
+    for vid_id in sorted(os.listdir(root), key=str.lower):
+        proj_dir = os.path.join(root, vid_id)
+        if not os.path.isdir(proj_dir):
+            continue
+        if not os.path.isfile(os.path.join(proj_dir, "data.json")):
+            continue
+        out.append({
+            "id":    vid_id,
+            "title": _read_title(proj_dir, vid_id),
+            "dir":   vid_id,                       # root からの相対フォルダ
+            "data":  "data.json",
+            "video": _find_video_file(proj_dir),   # 動画ファイル名（無ければ null）
+            "md":    "data.md"    if os.path.isfile(os.path.join(proj_dir, "data.md"))    else None,
+            "notes": "notes.json" if os.path.isfile(os.path.join(proj_dir, "notes.json")) else None,
+        })
+    return out
+
+
+def _write_video_index(root: str) -> Optional[str]:
+    """root に video_index.json を書き出す。生成・一覧取得のたびに最新化することで、
+    後でバックエンドを止めても（フォルダ選択方式で）フロントが一覧を再現できる。
+    書き込み不可でも本処理は致命的でないため、失敗はログのみで握りつぶす。"""
+    try:
+        index = {
+            "version":   "1",
+            "updatedAt": datetime.datetime.utcnow().isoformat() + "Z",
+            "projects":  _scan_projects(root),
+        }
+        path = os.path.join(root, VIDEO_INDEX_NAME)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+        return path
+    except Exception:
+        logger.exception("video_index.json の書き出しに失敗")
+        return None
+
+
 @app.get("/projects")
 async def list_projects(root: Optional[str] = Query(None)):
     target = _resolve_root(root)
@@ -946,6 +990,7 @@ async def list_projects(root: Optional[str] = Query(None)):
             "video_file": video_file,
             "has_data":   has_data,
         })
+    _write_video_index(target)   # 一覧取得のたびに静的インデックスを最新化
     return results
 
 
@@ -1273,6 +1318,7 @@ async def process_youtube(request: ProcessRequest, http_request: Request):
                 json.dump(final_json, f, ensure_ascii=False, indent=2)
             with open(os.path.join(output_dir, "data.md"), "w", encoding="utf-8") as f:
                 f.write(build_data_md(video_id, paras))
+            _write_video_index(PROJECTS_DIR)   # 親フォルダの静的インデックスを更新
         except Exception as e:
             logger.exception("アノテーション/保存でエラー")
             yield send({"type": "error", "stage": "save",
