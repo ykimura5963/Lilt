@@ -5,7 +5,7 @@ let autoFollow=true;   /* 再生中、現在行へ自動スクロール追従 */
 let fontScale=1;       /* トランスクリプト文字サイズ倍率 */
 let currentPara=-1, prevLitKey=null;
 let ytPlayer=null, tickTimer=null;
-let totalDur = PARAS[PARAS.length-1].end;
+let totalDur = PARAS.length ? PARAS[PARAS.length-1].end : 0;
 let timeOffset=0;
 let chunkRepeatOn=false;
 let chunkRepeatPi=-1;
